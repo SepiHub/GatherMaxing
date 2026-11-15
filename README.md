@@ -12,6 +12,9 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 - **History window** (open it with the minimap button):
   - **Lifetime:** your lifetime total and every session, showing date, length, gathers and gold.
   - **Resources:** pick a profession from the dropdown to see every item you've gathered with it. The three sortable columns are Resource (sorted by tier), Count and Value. It opens on the profession you gathered with last.
+- **Minimap right-click menu:**
+  - **Toggle session tracker:** hides or shows the Gathering Profit box. While it's off, sessions, history and the floating text still work as normal in the background.
+  - **Start new session:** ends the current session (saving it to history) and starts a fresh one.
 - **Per character:** each character has their own history. Window positions and sorting are shared across your account.
 
 ## Commands
@@ -19,9 +22,11 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 | Command | What it does |
 | --- | --- |
 | `/ggc` | Open or close the history window (`/mgc` also works) |
-| `/ggc box` | Show or hide the Gathering Profit box |
+| `/ggc box` | Show or hide the Gathering Profit box once (works even with the tracker off) |
 | `/ggc test 70000` | Play a test floating text (value in copper, not saved) |
 | `/ggc end` | End the current session now |
+| `/ggc new` | End the current session and start a new one |
+| `/ggc tracker` | Turn the session tracker (Gathering Profit box) on or off |
 | `/ggc claim` | Add history saved before per-character tracking to this character |
 
 ## Install

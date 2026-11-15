@@ -370,8 +370,11 @@ end
 
 -- Show the box now and fade it out after `seconds` without a new gather.
 -- The session itself keeps running; the next gather brings the box back.
+-- When the session tracker is turned off (minimap right-click menu) the box
+-- stays hidden unless `force` is set; tracking carries on as normal.
 local boxTimer
-local function ShowBoxFor(seconds)
+local function ShowBoxFor(seconds, force)
+    if ns.prefs and ns.prefs.trackerOff and not force then return end
     ShowBox()
     if boxTimer then boxTimer:Cancel() end
     boxTimer = C_Timer.NewTimer(math.max(seconds, 1), function()
@@ -438,6 +441,42 @@ local function StartTimer(seconds)
     sessionTimer = C_Timer.NewTimer(math.max(seconds, 1), EndSession)
 end
 
+local function NewSession()
+    ns.db.current = { start = time(), last = time(), total = 0, gathers = 0,
+                      nodes = 0, taps = 0, byProf = {} }
+end
+
+-- Ends the running session (saving it if anything was gathered) and starts
+-- a fresh one right away. Like any session, it ends after 10 minutes
+-- without gathering; an empty one isn't saved to history.
+function ns.StartNewSession()
+    EndSession()
+    NewSession()
+    StartTimer(SESSION_TIMEOUT)
+    UpdateBox()
+    ShowBoxFor(BOX_TIMEOUT)
+    Changed()
+end
+
+-- Session tracker = the Gathering Profit box. Turning it off only hides
+-- the box; sessions, history and floating text keep working.
+function ns.IsTrackerOn()
+    return not ns.prefs.trackerOff
+end
+
+function ns.SetTrackerOn(on)
+    ns.prefs.trackerOff = not on or nil
+    if on then
+        if ns.db.current then
+            local left = BOX_TIMEOUT - (time() - ns.db.current.last)
+            UpdateBox()
+            ShowBoxFor(math.max(left, 5))
+        end
+    else
+        HideBox()
+    end
+end
+
 -- items: { [itemID] = { count, value } } from one loot window
 local function RecordGather(prof, value, items, targetName)
     local db = ns.db
@@ -445,10 +484,7 @@ local function RecordGather(prof, value, items, targetName)
     if db.current and now - db.current.last >= SESSION_TIMEOUT then
         EndSession()
     end
-    if not db.current then
-        db.current = { start = now, last = now, total = 0, gathers = 0,
-                       nodes = 0, taps = 0, byProf = {} }
-    end
+    if not db.current then NewSession() end
     local current = db.current
     if prof == "mining" then
         if TrackNode(targetName, value) then current.nodes = current.nodes + 1 end
@@ -601,6 +637,8 @@ end)
 -- /ggc box        show or hide the Gathering Profit box
 -- /ggc test [c]   play a test float (not saved), e.g. /ggc test 70000
 -- /ggc end        end the current session now
+-- /ggc new        end the current session and start a new one
+-- /ggc tracker    turn the Gathering Profit box on or off
 -- /ggc claim      add the history saved before per-character tracking
 --                 to this character
 SLASH_MININGGOLDCALC1 = "/ggc"
@@ -620,7 +658,14 @@ SlashCmdList.MININGGOLDCALC = function(msg)
     elseif cmd == "test" then
         ShowFloat(tonumber(arg) or 70000)
     elseif cmd == "box" then
-        if box:IsShown() then HideBox() else UpdateBox(); ShowBoxFor(BOX_TIMEOUT) end
+        if box:IsShown() then HideBox() else UpdateBox(); ShowBoxFor(BOX_TIMEOUT, true) end
+    elseif cmd == "tracker" then
+        ns.SetTrackerOn(not ns.IsTrackerOn())
+        print("|cffe0a030Gathering Gold|r: session tracker "
+            .. (ns.IsTrackerOn() and "on." or "off (still tracking in the background)."))
+    elseif cmd == "new" then
+        ns.StartNewSession()
+        print("|cffe0a030Gathering Gold|r: started a new session.")
     elseif ns.ToggleHistory then
         ns.ToggleHistory()
     end

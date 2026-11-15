@@ -405,7 +405,7 @@ local button = CreateFrame("Button", "GatheringGoldCalculatorMinimapButton", Min
 button:SetSize(31, 31)
 button:SetFrameStrata("MEDIUM")
 button:SetFrameLevel(8)
-button:RegisterForClicks("LeftButtonUp")
+button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 button:RegisterForDrag("LeftButton")
 button:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
@@ -456,7 +456,39 @@ end
 
 button:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", DragUpdate) end)
 button:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
-button:SetScript("OnClick", function() ns.ToggleHistory() end)
+-- Right-click menu
+local menu = CreateFrame("Frame", "GatheringGoldCalculatorMinimapMenu", UIParent, "UIDropDownMenuTemplate")
+UIDropDownMenu_Initialize(menu, function(self, level)
+    if not ns.prefs then return end -- runs once while the file loads
+    local info = UIDropDownMenu_CreateInfo()
+    info.text = "Gathering Gold"
+    info.isTitle = true
+    info.notCheckable = true
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Toggle session tracker"
+    info.isNotRadio = true
+    info.checked = ns.IsTrackerOn()
+    info.func = function() ns.SetTrackerOn(not ns.IsTrackerOn()) end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Start new session"
+    info.notCheckable = true
+    info.func = function() ns.StartNewSession() end
+    UIDropDownMenu_AddButton(info, level)
+end, "MENU")
+
+button:SetScript("OnClick", function(self, mouse)
+    if mouse == "RightButton" then
+        GameTooltip:Hide()
+        ToggleDropDownMenu(1, nil, menu, self, 0, 0)
+    else
+        CloseDropDownMenus()
+        ns.ToggleHistory()
+    end
+end)
 
 button:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -467,7 +499,7 @@ button:SetScript("OnEnter", function(self)
     if ns.db.current then
         GameTooltip:AddDoubleLine("This session", Money(ns.db.current.total), 0.25, 1, 0.25)
     end
-    GameTooltip:AddLine("Click to open the history. Drag to move.", 0.6, 0.6, 0.6)
+    GameTooltip:AddLine("Click to open the history. Right-click for options.\nDrag to move.", 0.6, 0.6, 0.6)
     GameTooltip:Show()
 end)
 button:SetScript("OnLeave", function() GameTooltip:Hide() end)
