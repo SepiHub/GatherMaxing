@@ -1,4 +1,4 @@
--- GatheringGoldCalculator (shown in game as "Gathering Gold")
+-- GatherMaxing (formerly GatheringGoldCalculator)
 --   * floating "+ 7s 00c" text under your character for every gather
 --   * a text-only Gathering Profit box while you're gathering
 --   * sessions and per-profession resource totals for the history window
@@ -96,6 +96,28 @@ local function PriceOf(itemID)
     return select(11, GetItemInfo(itemID)) or 0
 end
 
+-- Is there any auction data to use? Probes common gathering items:
+--   "missing"  Auctionator isn't installed or enabled
+--   "noscan"   Auctionator is there but has no prices yet (no scan done)
+--   "ok"       auction prices are available
+local PRICE_PROBES = { 2770, 2771, 2772, 2835, 2836, 2447, 765, 785, 2318, 2319, 6303, 2589 }
+local function PriceStatus()
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if not api or not api.GetAuctionPriceByItemID then return "missing" end
+    for _, itemID in ipairs(PRICE_PROBES) do
+        local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON, itemID)
+        if ok and price and price > 0 then return "ok" end
+    end
+    return "noscan"
+end
+ns.PriceStatus = PriceStatus
+
+local RED = "|cffff4040"
+local PRICE_WARNINGS = {
+    missing = "No auction prices: using vendor prices.\nInstall Auctionator and run an Auctionator scan.",
+    noscan  = "No auction prices: using vendor prices.\nRun an Auctionator scan at the auction house.",
+}
+
 -- Known ores, stones and gems from mining nodes.
 local MINING_ITEMS = {
     -- ores
@@ -148,15 +170,15 @@ ns.FormatMoney = FormatMoney
 
 ---------------------------------------------------------------------------
 -- Saved data
---   ns.db (per character, GatheringGoldCalculatorCharDB):
+--   ns.db (per character, GatherMaxingCharDB):
 --     sessions: finished sessions
 --               { start, finish, total, gathers, nodes, taps, byProf = { [prof] = copper } }
 --     current:  the running session, kept so a /reload doesn't lose it
 --     loot:     [prof][itemID] = { count, value } summed over all time
---   ns.prefs (whole account, GatheringGoldCalculatorDB):
+--   ns.prefs (whole account, GatherMaxingDB):
 --     window positions, minimap button angle, Resources sort and profession,
 --     and `legacy`: data saved before tracking was per character, waiting
---     for /ggc claim on the character who gathered it.
+--     for /gmax claim on the character who gathered it.
 ---------------------------------------------------------------------------
 
 -- Fills in missing fields and upgrades data from older versions.
@@ -182,10 +204,11 @@ end
 
 function ns.InitDB()
     if ns.db then return ns.db end
-    GatheringGoldCalculatorDB = GatheringGoldCalculatorDB or {}
-    GatheringGoldCalculatorCharDB = GatheringGoldCalculatorCharDB or {}
-    local prefs = GatheringGoldCalculatorDB
+    GatherMaxingDB = GatherMaxingDB or {}
+    GatherMaxingCharDB = GatherMaxingCharDB or {}
+    local prefs = GatherMaxingDB
     prefs.pos = nil -- position of an old window, no longer used
+    prefs.floatIndividual = nil -- old setting; individual mode is now the default
 
     -- Data from before per-character tracking lives at the top of the
     -- account table. Park it in prefs.legacy until someone claims it.
@@ -198,7 +221,7 @@ function ns.InitDB()
     end
 
     ns.prefs = prefs
-    ns.db = Normalize(GatheringGoldCalculatorCharDB)
+    ns.db = Normalize(GatherMaxingCharDB)
     return ns.db
 end
 
@@ -238,7 +261,216 @@ local holder = CreateFrame("Frame", nil, UIParent)
 holder:SetSize(1, 1)
 holder:SetFrameStrata("HIGH")
 
+-- Floating text area: where the text starts and how big it is. It's
+-- invisible until edit mode (minimap right-click menu or /gmax edit), which
+-- shows it as a box you can drag, with a corner grip to resize it. A
+-- bigger box means bigger text that rises further.
+local AREA_W, AREA_H = 220, 90 -- default size; text scale 1
+local AREA_START = 15          -- text starts this far above the area's bottom
+
+local area = CreateFrame("Frame", "GatherMaxingFloatArea", UIParent, "BackdropTemplate")
+area:SetSize(AREA_W, AREA_H)
+area:SetPoint("CENTER", UIParent, "CENTER", 0, -170) -- just under your character
+area:SetFrameStrata("MEDIUM") -- below the text (HIGH), so samples show on top
+area:SetMovable(true)
+area:SetClampedToScreen(true)
+area:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+area:SetBackdropColor(0.1, 0.4, 0.8, 0.25)
+area:SetBackdropBorderColor(0.3, 0.6, 1, 0.9)
+area:EnableMouse(false)
+area:RegisterForDrag("LeftButton")
+
+local areaLabel = area:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+areaLabel:SetPoint("TOP", 0, -6)
+areaLabel:SetText("Floating text\n|cffffffffDrag to move, corner to resize|r")
+
+local grip = CreateFrame("Button", nil, area)
+grip:SetSize(16, 16)
+grip:SetPoint("BOTTOMRIGHT", -1, 1)
+grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+
+-- Checkmark in the top-right corner: click it to leave edit mode.
+local done = CreateFrame("Button", nil, area)
+done:SetSize(22, 22)
+done:SetPoint("TOPRIGHT", -2, -2)
+done:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Check")
+done:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight", "ADD")
+done:SetScript("OnClick", function()
+    GameTooltip:Hide()
+    ns.SetFloatEditMode(false)
+end)
+done:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Done")
+    GameTooltip:AddLine("Save and leave edit mode.", 1, 1, 1)
+    GameTooltip:Show()
+end)
+done:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+local function ApplyAreaScale()
+    holder:SetScale(math.max(area:GetHeight() / AREA_H, 0.1))
+end
+
+local SNAP = 25 -- pixels from the screen's middle line that snap to it
+
+-- The box is always stored as an offset of its center from the screen's
+-- center, so x = 0 means "centered" on any resolution.
+local function PlaceArea(x, y)
+    area:ClearAllPoints()
+    area:SetPoint("CENTER", UIParent, "CENTER", x, y)
+end
+
+local function AreaOffset()
+    local ax, ay = area:GetCenter()
+    local mx, my = UIParent:GetCenter()
+    return ax - mx, ay - my
+end
+
+local function SaveArea()
+    local x, y = AreaOffset()
+    if math.abs(x) < 0.5 then x = 0 end
+    PlaceArea(x, y)
+    ns.prefs.floatPos = { "CENTER", "CENTER", x, y }
+    ns.prefs.floatSize = { area:GetWidth(), area:GetHeight() }
+end
+
+-- Middle line shown while dragging; it lights up when the box snaps to it.
+local guideFrame = CreateFrame("Frame", nil, UIParent)
+guideFrame:SetAllPoints(UIParent)
+guideFrame:SetFrameStrata("HIGH")
+local guide = guideFrame:CreateTexture(nil, "OVERLAY")
+guide:SetColorTexture(1, 1, 1, 0.25)
+guide:SetWidth(2)
+guide:SetPoint("TOP", guideFrame, "TOP")
+guide:SetPoint("BOTTOM", guideFrame, "BOTTOM")
+guide:Hide()
+
+local function Cursor()
+    local s = area:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    return cx / s, cy / s
+end
+
+-- Dragging is done by hand (instead of StartMoving) so the box can snap
+-- to the middle of the screen, left to right.
+local grabX, grabY
+local function FollowDrag()
+    local cx, cy = Cursor()
+    local mx, my = UIParent:GetCenter()
+    local x, y = cx + grabX - mx, cy + grabY - my
+    local snapped = math.abs(x) < SNAP
+    if snapped then x = 0 end
+    PlaceArea(x, y)
+    if snapped then
+        guide:SetColorTexture(1, 0.82, 0, 0.9)
+    else
+        guide:SetColorTexture(1, 1, 1, 0.25)
+    end
+end
+
+area:SetScript("OnDragStart", function(self)
+    local cx, cy = Cursor()
+    local ax, ay = self:GetCenter()
+    grabX, grabY = ax - cx, ay - cy
+    guide:Show()
+    self:SetScript("OnUpdate", FollowDrag)
+end)
+area:SetScript("OnDragStop", function(self)
+    self:SetScript("OnUpdate", nil)
+    guide:Hide()
+    SaveArea()
+end)
+
+area:SetScript("OnSizeChanged", ApplyAreaScale)
+
+-- Resizing follows the cursor by hand (instead of StartSizing) so the box
+-- keeps its shape and the text scales evenly. The top edge stays put; a
+-- centered box grows on both sides so it stays centered, any other box
+-- keeps its top-left corner.
+local centeredResize, fixedX
+local function FollowResize()
+    local cx, cy = Cursor()
+    local w = centeredResize and 2 * (cx - fixedX) or (cx - fixedX)
+    local h = area:GetTop() - cy
+    local scale = math.max(w / AREA_W, h / AREA_H)
+    scale = math.min(math.max(scale, 0.5), 3)
+    area:SetSize(AREA_W * scale, AREA_H * scale)
+end
+
+grip:SetScript("OnMouseDown", function()
+    local x = AreaOffset()
+    centeredResize = math.abs(x) < 0.5
+    local top = area:GetTop()
+    area:ClearAllPoints()
+    if centeredResize then
+        fixedX = UIParent:GetCenter()
+        area:SetPoint("TOP", UIParent, "BOTTOMLEFT", fixedX, top)
+    else
+        fixedX = area:GetLeft()
+        area:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", fixedX, top)
+    end
+    grip:SetScript("OnUpdate", FollowResize)
+end)
+grip:SetScript("OnMouseUp", function()
+    grip:SetScript("OnUpdate", nil)
+    SaveArea()
+end)
+
+-- Right-click the box to put it back where it started.
+area:SetScript("OnMouseUp", function(self, mouse)
+    if mouse ~= "RightButton" then return end
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", 0, -170)
+    self:SetSize(AREA_W, AREA_H)
+    ns.prefs.floatPos, ns.prefs.floatSize = nil, nil
+end)
+
+function ns.RestoreFloatArea()
+    local pos, size = ns.prefs.floatPos, ns.prefs.floatSize
+    if pos then
+        area:ClearAllPoints()
+        area:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+    end
+    if size then area:SetSize(size[1], size[2]) end
+    ApplyAreaScale()
+end
+
+local ShowFloat -- defined below; edit mode plays samples with it
+local editTicker
+
+function ns.IsFloatEditMode()
+    return area:IsShown()
+end
+
+function ns.SetFloatEditMode(on)
+    if editTicker then editTicker:Cancel(); editTicker = nil end
+    if on then
+        area:SetAlpha(1)
+        area:EnableMouse(true)
+        area:Show()
+        -- Play a sample every few seconds so you can see the result.
+        local function Sample()
+            ShowFloat(2193, { [2772] = { count = 2, value = 1020 }, [2838] = { count = 3, value = 1173 } },
+                { 2772, 2838 })
+        end
+        Sample()
+        editTicker = C_Timer.NewTicker(3, Sample)
+    else
+        area:EnableMouse(false)
+        area:Hide()
+    end
+end
+area:Hide()
+
 local pool = {}
+local ICON_SIZE = 18    -- item icon size in individual mode
+local ICON_GAP = 2      -- pixels between the icon and the text beside it
 
 local function GetFloater()
     for _, f in ipairs(pool) do
@@ -246,8 +478,13 @@ local function GetFloater()
     end
     local f = CreateFrame("Frame", nil, holder)
     f:SetSize(200, 24)
+    -- Individual lines are "2x[icon]money". The icon is a real
+    -- texture (not a |T|t text code) so it rises and fades with the text.
+    f.count = f:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
+    f.count:SetShadowOffset(1, -1)
+    f.icon = f:CreateTexture(nil, "OVERLAY")
+    f.icon:SetSize(ICON_SIZE, ICON_SIZE)
     f.text = f:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
-    f.text:SetPoint("CENTER")
     f.text:SetShadowOffset(1, -1)
 
     f.anim = f:CreateAnimationGroup()
@@ -266,32 +503,52 @@ local function GetFloater()
     return f
 end
 
-local LINE_DELAY = 0.1  -- seconds between lines in individual mode
+local LINE_DELAY = 0.2  -- seconds between lines in individual mode
 local LINE_GAP = 18     -- pixels between lines in individual mode
 
-local function PlayFloat(text, offset)
+-- count and icon are only given in individual mode
+local function PlayFloat(text, offset, count, icon)
     local f = GetFloater()
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", 0, -200 - (offset or 0)) -- just under your character
+    -- holder's scale (from the area's size) scales the text, rise and offsets.
+    f:SetPoint("CENTER", area, "BOTTOM", 0, AREA_START - (offset or 0))
     f.text:SetText(text)
+    f.text:ClearAllPoints()
+    if icon then
+        f.count:SetText(count)
+        f.icon:SetTexture(icon)
+        -- Center the whole line: count, gap, icon, gap, money.
+        local width = f.count:GetStringWidth() + ICON_SIZE + f.text:GetStringWidth() + 2 * ICON_GAP
+        f.count:ClearAllPoints()
+        f.count:SetPoint("LEFT", f, "CENTER", -width / 2, 0)
+        f.icon:ClearAllPoints()
+        f.icon:SetPoint("LEFT", f.count, "RIGHT", ICON_GAP, 0)
+        f.text:SetPoint("LEFT", f.icon, "RIGHT", ICON_GAP, 0)
+        f.count:Show()
+        f.icon:Show()
+    else
+        f.text:SetPoint("CENTER")
+        f.count:Hide()
+        f.icon:Hide()
+    end
     f:SetAlpha(1)
     f:Show()
     f.anim:Stop()
     f.anim:Play()
 end
 
--- Floating text mode: combined (one line with the whole loot's value, the
--- default) or individual (one line per item: "+ 2 [icon] 5s 10c").
+-- Floating text mode: individual (one line per item: "2x[icon]5s 10c",
+-- the default) or combined (one line with the whole loot's value).
 function ns.IsCombinedFloat()
-    return not ns.prefs.floatIndividual
+    return ns.prefs.floatCombined == true
 end
 
 function ns.SetCombinedFloat(on)
-    ns.prefs.floatIndividual = not on or nil
+    ns.prefs.floatCombined = on or nil
 end
 
 -- items: { [itemID] = { count, value } }, order: itemIDs in loot order
-local function ShowFloat(copper, items, order)
+function ShowFloat(copper, items, order)
     if not items or not order or ns.IsCombinedFloat() then
         PlayFloat(FormatMoney(copper))
         return
@@ -299,14 +556,15 @@ local function ShowFloat(copper, items, order)
     for i, itemID in ipairs(order) do
         local info = items[itemID]
         local icon = select(5, GetItemInfoInstant(itemID)) or 134400 -- question mark
-        local text = string.format("+ %d |T%s:18|t %s", info.count, icon, FormatMoney(info.value, true))
+        local count = info.count .. "x"
+        local text = FormatMoney(info.value, true)
         -- Each line starts a bit lower than the one before, so they stack
         -- instead of overlapping while they rise.
         local offset = (i - 1) * LINE_GAP
         if i == 1 then
-            PlayFloat(text, offset)
+            PlayFloat(text, offset, count, icon)
         else
-            C_Timer.After((i - 1) * LINE_DELAY, function() PlayFloat(text, offset) end)
+            C_Timer.After((i - 1) * LINE_DELAY, function() PlayFloat(text, offset, count, icon) end)
         end
     end
 end
@@ -346,7 +604,7 @@ end
 ---------------------------------------------------------------------------
 -- Gathering Profit box: text only, draggable, shown while gathering.
 ---------------------------------------------------------------------------
-local box = CreateFrame("Frame", "GatheringGoldCalculatorBox", UIParent)
+local box = CreateFrame("Frame", "GatherMaxingBox", UIParent)
 box:SetSize(250, 92)
 box:SetMovable(true)
 box:EnableMouse(true)
@@ -432,6 +690,12 @@ local function UpdateBox()
     end
     lines[#lines + 1] = string.format("Session (%d gathers): %s", current.gathers, M(current.total))
     lines[#lines + 1] = "Per hour: " .. M(current.total / hours)
+    local warning = PRICE_WARNINGS[PriceStatus()]
+    if warning then
+        for line in warning:gmatch("[^\n]+") do
+            lines[#lines + 1] = RED .. line .. "|r"
+        end
+    end
     boxText:SetText(table.concat(lines, "\n"))
     box:SetHeight(28 + #lines * 14)
 end
@@ -461,7 +725,7 @@ local function EndSession()
         table.insert(db.sessions, {
             start = current.start, finish = current.last, total = current.total,
             gathers = current.gathers, nodes = current.nodes, taps = current.taps,
-            byProf = current.byProf,
+            byProf = current.byProf, items = current.items,
         })
     end
     lastValue, lastProf, node = 0, nil, nil
@@ -477,7 +741,7 @@ end
 
 local function NewSession()
     ns.db.current = { start = time(), last = time(), total = 0, gathers = 0,
-                      nodes = 0, taps = 0, byProf = {} }
+                      nodes = 0, taps = 0, byProf = {}, items = {} }
 end
 
 -- Ends the running session (saving it if anything was gathered) and starts
@@ -532,6 +796,9 @@ local function RecordGather(prof, value, items, targetName)
     db.lastProf = prof -- Resources opens on this profession
 
     local loot = db.loot[prof]
+    -- Per-session breakdown: what was gathered and what it was worth at the
+    -- time. Sessions from before this was added have no `items`.
+    current.items = current.items or {}
     for itemID, info in pairs(items) do
         local r = loot[itemID]
         if not r then
@@ -540,6 +807,14 @@ local function RecordGather(prof, value, items, targetName)
         end
         r.count = r.count + info.count
         r.value = r.value + info.value
+
+        local s = current.items[itemID]
+        if not s then
+            s = { count = 0, value = 0, prof = prof }
+            current.items[itemID] = s
+        end
+        s.count = s.count + info.count
+        s.value = s.value + info.value
     end
 
     StartTimer(SESSION_TIMEOUT)
@@ -587,6 +862,7 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("UNIT_SPELLCAST_SENT")
 events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 events:RegisterEvent("UNIT_SPELLCAST_FAILED")
@@ -597,6 +873,7 @@ events:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         if ... ~= ADDON then return end
         local db = ns.InitDB()
+        ns.RestoreFloatArea()
         local pos = ns.prefs.boxPos
         if pos then
             box:ClearAllPoints()
@@ -605,8 +882,8 @@ events:SetScript("OnEvent", function(_, event, ...)
         if ns.prefs.legacy then
             C_Timer.After(5, function()
                 if not ns.prefs.legacy then return end
-                print("|cffe0a030Gathering Gold|r: gathering is now tracked per character. "
-                    .. "Your older history is set aside: type |cffffd200/ggc claim|r on the "
+                print("|cffe0a030GatherMaxing|r: gathering is now tracked per character. "
+                    .. "Your older history is set aside: type |cffffd200/gmax claim|r on the "
                     .. "character who gathered it to add it to that character.")
             end)
         end
@@ -626,6 +903,19 @@ events:SetScript("OnEvent", function(_, event, ...)
             end
         end
         events:UnregisterEvent("ADDON_LOADED")
+        return
+    end
+
+    if event == "PLAYER_LOGIN" then
+        -- Give Auctionator a few seconds to load its prices, then warn
+        -- in chat if there are none.
+        C_Timer.After(5, function()
+            local warning = PRICE_WARNINGS[PriceStatus()]
+            if warning then
+                print(RED .. "GatherMaxing: " .. warning:gsub("\n", " ") .. "|r")
+            end
+        end)
+        events:UnregisterEvent("PLAYER_LOGIN")
         return
     end
 
@@ -671,27 +961,29 @@ events:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
--- /ggc            open or close the history window   (/mgc also works)
--- /ggc box        show or hide the Gathering Profit box
--- /ggc test [c]   play a test float (not saved), e.g. /ggc test 70000
--- /ggc end        end the current session now
--- /ggc new        end the current session and start a new one
--- /ggc tracker    turn the Gathering Profit box on or off
--- /ggc claim      add the history saved before per-character tracking
+-- /gmax            open or close the history window   (/ggc and /mgc also work)
+-- /gmax edit       move or resize the floating text (edit mode on/off)
+-- /gmax box        show or hide the Gathering Profit box
+-- /gmax test [c]   play a test float (not saved), e.g. /gmax test 70000
+-- /gmax end        end the current session now
+-- /gmax new        end the current session and start a new one
+-- /gmax tracker    turn the Gathering Profit box on or off
+-- /gmax claim      add the history saved before per-character tracking
 --                 to this character
-SLASH_MININGGOLDCALC1 = "/ggc"
-SLASH_MININGGOLDCALC2 = "/mgc"
-SlashCmdList.MININGGOLDCALC = function(msg)
+SLASH_GATHERMAXING1 = "/gmax"
+SLASH_GATHERMAXING2 = "/ggc" -- older names, still work
+SLASH_GATHERMAXING3 = "/mgc"
+SlashCmdList.GATHERMAXING = function(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
     local cmd, arg = msg:match("^(%S*)%s*(.-)$")
     if cmd == "end" then
         if ns.db.current then EndSession() end
     elseif cmd == "claim" then
         if ns.ClaimLegacy() then
-            print("|cffe0a030Gathering Gold|r: older history added to " .. UnitName("player") .. ".")
+            print("|cffe0a030GatherMaxing|r: older history added to " .. UnitName("player") .. ".")
             Changed()
         else
-            print("|cffe0a030Gathering Gold|r: there is no older history left to claim.")
+            print("|cffe0a030GatherMaxing|r: there is no older history left to claim.")
         end
     elseif cmd == "test" then
         local value = tonumber(arg) or 70000
@@ -699,15 +991,17 @@ SlashCmdList.MININGGOLDCALC = function(msg)
         local half = math.floor(value / 2)
         ShowFloat(value, { [2772] = { count = 2, value = half }, [2838] = { count = 3, value = value - half } },
             { 2772, 2838 })
+    elseif cmd == "edit" then
+        ns.SetFloatEditMode(not ns.IsFloatEditMode())
     elseif cmd == "box" then
         if box:IsShown() then HideBox() else UpdateBox(); ShowBoxFor(BOX_TIMEOUT, true) end
     elseif cmd == "tracker" then
         ns.SetTrackerOn(not ns.IsTrackerOn())
-        print("|cffe0a030Gathering Gold|r: session tracker "
+        print("|cffe0a030GatherMaxing|r: session tracker "
             .. (ns.IsTrackerOn() and "on." or "off (still tracking in the background)."))
     elseif cmd == "new" then
         ns.StartNewSession()
-        print("|cffe0a030Gathering Gold|r: started a new session.")
+        print("|cffe0a030GatherMaxing|r: started a new session.")
     elseif ns.ToggleHistory then
         ns.ToggleHistory()
     end

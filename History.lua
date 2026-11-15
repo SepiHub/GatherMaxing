@@ -13,7 +13,8 @@ local PICKAXE = "Interface\\Icons\\INV_Pick_02"
 local ROW_HEIGHT = 20
 local CONTENT_WIDTH = 330
 local COUNT_RIGHT = 236  -- right edge of the Count column
-local view = "lifetime"
+local view = "lifetime" -- "lifetime", "resources" or "session"
+local selectedSession   -- { s = session, live = true/nil } shown in the session view
 
 -- Mining skill of the vein each item comes from, so mining sorts
 -- Copper < Tin < Iron < Mithril < Thorium. Anything not listed (herbs,
@@ -98,7 +99,7 @@ end
 ---------------------------------------------------------------------------
 -- Window
 ---------------------------------------------------------------------------
-local frame = CreateFrame("Frame", "GatheringGoldCalculatorHistory", UIParent, "BasicFrameTemplateWithInset")
+local frame = CreateFrame("Frame", "GatherMaxingHistory", UIParent, "BasicFrameTemplateWithInset")
 frame:SetSize(380, 440)
 frame:SetPoint("CENTER")
 frame:SetMovable(true)
@@ -109,11 +110,11 @@ frame:SetFrameStrata("DIALOG")
 frame:SetScript("OnDragStart", frame.StartMoving)
 frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 frame:Hide()
-tinsert(UISpecialFrames, "GatheringGoldCalculatorHistory") -- Escape closes it
+tinsert(UISpecialFrames, "GatherMaxingHistory") -- Escape closes it
 
 frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 frame.title:SetPoint("TOP", 0, -5)
-frame.title:SetText("Gathering Gold")
+frame.title:SetText("GatherMaxing")
 
 local header = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 header:SetPoint("TOPLEFT", 14, -34)
@@ -131,7 +132,7 @@ local Refresh -- defined below
 local scroll_reset -- set when the list should jump back to the top
 
 -- Profession dropdown (Resources view only), top right
-local dropdown = CreateFrame("Frame", "GatheringGoldCalculatorProfDropDown", frame, "UIDropDownMenuTemplate")
+local dropdown = CreateFrame("Frame", "GatherMaxingProfDropDown", frame, "UIDropDownMenuTemplate")
 dropdown:SetPoint("TOPRIGHT", 4, -28)
 UIDropDownMenu_SetWidth(dropdown, 110)
 -- UIDropDownMenu_Initialize runs this right away while the file loads,
@@ -207,7 +208,7 @@ local function UpdateHeaders()
     end
 end
 
-local scroll = CreateFrame("ScrollFrame", "GatheringGoldCalculatorHistoryScroll", frame, "UIPanelScrollFrameTemplate")
+local scroll = CreateFrame("ScrollFrame", "GatherMaxingHistoryScroll", frame, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("BOTTOMRIGHT", -32, 40)
 
 local content = CreateFrame("Frame", nil, scroll)
@@ -248,8 +249,26 @@ local function GetRow(i)
     row.right:SetPoint("RIGHT", -4, 0)
     row.right:SetJustifyH("RIGHT")
 
+    -- Clickable rows (sessions) light up under the mouse.
+    row.hover = row:CreateTexture(nil, "BORDER")
+    row.hover:SetAllPoints()
+    row.hover:SetColorTexture(1, 0.82, 0, 0.12)
+    row.hover:Hide()
+    row:SetScript("OnEnter", function(self) if self.onClick then self.hover:Show() end end)
+    row:SetScript("OnLeave", function(self) self.hover:Hide() end)
+    row:SetScript("OnMouseUp", function(self, mouse)
+        if self.onClick and mouse == "LeftButton" then self.onClick() end
+    end)
+
     rows[i] = row
     return row
+end
+
+local function SetRowClick(i, func)
+    local row = GetRow(i)
+    row.onClick = func
+    row:EnableMouse(func ~= nil)
+    if not func then row.hover:Hide() end
 end
 
 -- count = nil means a two-column row (lifetime view)
@@ -274,6 +293,7 @@ local function SetRow(i, iconPath, left, count, right)
     end
     row.left:SetText(left)
     row.right:SetText(right)
+    SetRowClick(i, nil)
     row:Show()
 end
 
@@ -290,7 +310,8 @@ local function ShowLifetime()
     local db = ns.db
     local total, gathers, count = LifetimeTotals()
     header:SetText("Lifetime: " .. Money(total))
-    subheader:SetText(string.format("%d sessions, %d gathers", count, gathers))
+    subheader:SetText(string.format("%d sessions, %d gathers  |cff999999(click a session for details)|r",
+        count, gathers))
     toggle:SetText("Resources")
     columns:Hide()
     dropdown:Hide()
@@ -311,19 +332,25 @@ local function ShowLifetime()
             date("%b %d  %H:%M", s.start), Duration(finish - s.start), s.gathers or 0,
             entry.live and "  |cff40ff40(now)|r" or "")
         SetRow(i, nil, left, nil, Money(s.total))
+        SetRowClick(i, function()
+            selectedSession = entry
+            view = "session"
+            scroll_reset = true
+            Refresh()
+        end)
     end
     empty:SetText(#list == 0 and "No sessions yet. Go gather something!" or "")
     return #list
 end
 
-local function ShowResources()
-    local db, prefs = ns.db, ns.prefs
+-- Items from { [itemID] = { count, value } }, sorted by the column headers.
+local function SortedItems(source)
+    local prefs = ns.prefs
     prefs.sortKey = prefs.sortKey or "value"
     if prefs.sortAsc == nil then prefs.sortAsc = false end
-    local prof = SelectedProfession()
 
     local list, total = {}, 0
-    for itemID, r in pairs(db.loot[prof.key]) do
+    for itemID, r in pairs(source) do
         local name, _, quality, _, _, _, _, _, _, texture = GetItemInfo(itemID)
         if not texture and GetItemInfoInstant then
             texture = select(5, GetItemInfoInstant(itemID))
@@ -343,22 +370,66 @@ local function ShowResources()
         end
         return a.name < b.name
     end)
+    return list, total
+end
+
+local function ItemLabel(r)
+    local color = r.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[r.quality]
+    return (color and color.hex or "|cffffffff") .. r.name .. "|r"
+end
+
+local function ShowItemColumns()
+    columns:Show()
+    UpdateHeaders()
+    scroll:SetPoint("TOPLEFT", 12, -98)
+end
+
+local function ShowResources()
+    local prof = SelectedProfession()
+    local list, total = SortedItems(ns.db.loot[prof.key])
 
     header:SetText(Icon(prof.icon, 18) .. " " .. Money(total))
     subheader:SetText(string.format("%d different %s resources", #list, prof.label:lower()))
     toggle:SetText("Lifetime")
     UIDropDownMenu_SetText(dropdown, prof.label)
     dropdown:Show()
-    columns:Show()
-    UpdateHeaders()
-    scroll:SetPoint("TOPLEFT", 12, -98)
+    ShowItemColumns()
 
     for i, r in ipairs(list) do
-        local color = r.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[r.quality]
-        local label = (color and color.hex or "|cffffffff") .. r.name .. "|r"
-        SetRow(i, r.texture, label, tostring(r.count), Money(r.value))
+        SetRow(i, r.texture, ItemLabel(r), tostring(r.count), Money(r.value))
     end
     empty:SetText(#list == 0 and ("Nothing from " .. prof.label .. " yet.") or "")
+    return #list
+end
+
+-- One session: everything gathered in it, with the price each item had
+-- at the time (value / count), so you can compare prices over time.
+local function ShowSession()
+    local entry = selectedSession
+    local s = entry.s
+    -- If the running session ended while it was open, the table we hold
+    -- still has all its data; it just isn't "now" any more.
+    local live = entry.live and ns.db.current == s
+    local finish = live and time() or s.finish or s.last or s.start
+    header:SetText(SessionIcons(s) .. " " .. Money(s.total))
+    subheader:SetText(string.format("%s, %s, %d gathers%s", date("%b %d %Y  %H:%M", s.start),
+        Duration(finish - s.start), s.gathers or 0, live and "  |cff40ff40(now)|r" or ""))
+    toggle:SetText("Back")
+    dropdown:Hide()
+    ShowItemColumns()
+
+    if not s.items then
+        empty:SetText("No item breakdown for this session.\n"
+            .. "Items are saved for each session from now on.")
+        return 0
+    end
+    local list = SortedItems(s.items)
+    for i, r in ipairs(list) do
+        local each = r.count > 0 and r.value / r.count or 0
+        local label = ItemLabel(r) .. "  |cff999999@ " .. Money(each) .. "|r"
+        SetRow(i, r.texture, label, tostring(r.count), Money(r.value))
+    end
+    empty:SetText(#list == 0 and "Nothing gathered in this session." or "")
     return #list
 end
 
@@ -366,7 +437,15 @@ Refresh = function()
     if not frame:IsShown() or not ns.db then return end
     for _, row in ipairs(rows) do row:Hide() end
     if scroll_reset then scroll:SetVerticalScroll(0); scroll_reset = nil end
-    local count = view == "lifetime" and ShowLifetime() or ShowResources()
+    if view == "session" and not selectedSession then view = "lifetime" end
+    local count
+    if view == "session" then
+        count = ShowSession()
+    elseif view == "resources" then
+        count = ShowResources()
+    else
+        count = ShowLifetime()
+    end
     content:SetHeight(math.max(count * ROW_HEIGHT, 1))
 end
 ns.RefreshHistory = Refresh
@@ -378,6 +457,7 @@ local function SelectLastProfession()
 end
 
 toggle:SetScript("OnClick", function()
+    -- Lifetime -> Resources, Resources -> Lifetime, a session -> back to Lifetime
     view = view == "lifetime" and "resources" or "lifetime"
     if view == "resources" then SelectLastProfession() end
     scroll:SetVerticalScroll(0)
@@ -391,7 +471,7 @@ end)
 -- Item names and icons can arrive from the server after the window is drawn.
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:SetScript("OnEvent", function()
-    if view == "resources" then Refresh() end
+    if view ~= "lifetime" then Refresh() end
 end)
 
 function ns.ToggleHistory()
@@ -401,7 +481,7 @@ end
 ---------------------------------------------------------------------------
 -- Minimap button (drag it around the minimap edge)
 ---------------------------------------------------------------------------
-local button = CreateFrame("Button", "GatheringGoldCalculatorMinimapButton", Minimap)
+local button = CreateFrame("Button", "GatherMaxingMinimapButton", Minimap)
 button:SetSize(31, 31)
 button:SetFrameStrata("MEDIUM")
 button:SetFrameLevel(8)
@@ -457,11 +537,11 @@ end
 button:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", DragUpdate) end)
 button:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
 -- Right-click menu
-local menu = CreateFrame("Frame", "GatheringGoldCalculatorMinimapMenu", UIParent, "UIDropDownMenuTemplate")
+local menu = CreateFrame("Frame", "GatherMaxingMinimapMenu", UIParent, "UIDropDownMenuTemplate")
 UIDropDownMenu_Initialize(menu, function(self, level)
     if not ns.prefs then return end -- runs once while the file loads
     local info = UIDropDownMenu_CreateInfo()
-    info.text = "Gathering Gold"
+    info.text = "GatherMaxing"
     info.isTitle = true
     info.notCheckable = true
     UIDropDownMenu_AddButton(info, level)
@@ -469,6 +549,7 @@ UIDropDownMenu_Initialize(menu, function(self, level)
     info = UIDropDownMenu_CreateInfo()
     info.text = "Toggle session tracker"
     info.isNotRadio = true
+    info.keepShownOnClick = true
     info.checked = ns.IsTrackerOn()
     info.func = function() ns.SetTrackerOn(not ns.IsTrackerOn()) end
     UIDropDownMenu_AddButton(info, level)
@@ -480,8 +561,21 @@ UIDropDownMenu_Initialize(menu, function(self, level)
         .. "Unchecked: one line per item, with its count, icon and value."
     info.tooltipOnButton = true
     info.isNotRadio = true
+    info.keepShownOnClick = true
     info.checked = ns.IsCombinedFloat()
     info.func = function() ns.SetCombinedFloat(not ns.IsCombinedFloat()) end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Edit floating text position"
+    info.tooltipTitle = "Edit floating text position"
+    info.tooltipText = "Shows a box: drag it to move the floating text, drag its bottom-right "
+        .. "corner to make the text bigger or smaller. Right-click the box to reset it."
+    info.tooltipOnButton = true
+    info.isNotRadio = true
+    info.keepShownOnClick = true
+    info.checked = ns.IsFloatEditMode()
+    info.func = function() ns.SetFloatEditMode(not ns.IsFloatEditMode()) end
     UIDropDownMenu_AddButton(info, level)
 
     info = UIDropDownMenu_CreateInfo()
@@ -503,7 +597,7 @@ end)
 
 button:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("Gathering Gold")
+    GameTooltip:AddLine("GatherMaxing")
     local total, gathers, count = LifetimeTotals()
     GameTooltip:AddDoubleLine("Lifetime", Money(total), 1, 1, 1)
     GameTooltip:AddDoubleLine("Sessions / gathers", count .. " / " .. gathers, 1, 1, 1, 1, 1, 1)
