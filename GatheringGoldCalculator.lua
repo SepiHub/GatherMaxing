@@ -266,15 +266,49 @@ local function GetFloater()
     return f
 end
 
-local function ShowFloat(copper)
+local LINE_DELAY = 0.1  -- seconds between lines in individual mode
+local LINE_GAP = 18     -- pixels between lines in individual mode
+
+local function PlayFloat(text, offset)
     local f = GetFloater()
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", 0, -200) -- just under your character
-    f.text:SetText(FormatMoney(copper))
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, -200 - (offset or 0)) -- just under your character
+    f.text:SetText(text)
     f:SetAlpha(1)
     f:Show()
     f.anim:Stop()
     f.anim:Play()
+end
+
+-- Floating text mode: combined (one line with the whole loot's value, the
+-- default) or individual (one line per item: "+ 2 [icon] 5s 10c").
+function ns.IsCombinedFloat()
+    return not ns.prefs.floatIndividual
+end
+
+function ns.SetCombinedFloat(on)
+    ns.prefs.floatIndividual = not on or nil
+end
+
+-- items: { [itemID] = { count, value } }, order: itemIDs in loot order
+local function ShowFloat(copper, items, order)
+    if not items or not order or ns.IsCombinedFloat() then
+        PlayFloat(FormatMoney(copper))
+        return
+    end
+    for i, itemID in ipairs(order) do
+        local info = items[itemID]
+        local icon = select(5, GetItemInfoInstant(itemID)) or 134400 -- question mark
+        local text = string.format("+ %d |T%s:18|t %s", info.count, icon, FormatMoney(info.value, true))
+        -- Each line starts a bit lower than the one before, so they stack
+        -- instead of overlapping while they rise.
+        local offset = (i - 1) * LINE_GAP
+        if i == 1 then
+            PlayFloat(text, offset)
+        else
+            C_Timer.After((i - 1) * LINE_DELAY, function() PlayFloat(text, offset) end)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -518,7 +552,7 @@ end
 -- Loot detection
 ---------------------------------------------------------------------------
 local function ReadLoot(prof)
-    local total, items, found = 0, {}, false
+    local total, items, order, found = 0, {}, {}, false
     local itemType = Enum and Enum.LootSlotType and Enum.LootSlotType.Item or 1
     for slot = 1, GetNumLootItems() do
         if not GetLootSlotType or GetLootSlotType(slot) == itemType then
@@ -528,7 +562,11 @@ local function ReadLoot(prof)
                 if itemID and Counts(prof, itemID) then
                     local quantity = select(3, GetLootSlotInfo(slot)) or 1
                     local value = PriceOf(itemID) * quantity
-                    local entry = items[itemID] or { count = 0, value = 0 }
+                    local entry = items[itemID]
+                    if not entry then
+                        entry = { count = 0, value = 0 }
+                        order[#order + 1] = itemID
+                    end
                     entry.count = entry.count + quantity
                     entry.value = entry.value + value
                     items[itemID] = entry
@@ -538,7 +576,7 @@ local function ReadLoot(prof)
             end
         end
     end
-    if found then return total, items end
+    if found then return total, items, order end
 end
 
 local function IsFishing()
@@ -602,9 +640,9 @@ events:SetScript("OnEvent", function(_, event, ...)
             prof, target = castProf, castTarget
         end
         if prof then
-            local value, items = ReadLoot(prof)
+            local value, items, order = ReadLoot(prof)
             if value then
-                ShowFloat(value)
+                ShowFloat(value, items, order)
                 RecordGather(prof, value, items, target)
             end
         end
@@ -656,7 +694,11 @@ SlashCmdList.MININGGOLDCALC = function(msg)
             print("|cffe0a030Gathering Gold|r: there is no older history left to claim.")
         end
     elseif cmd == "test" then
-        ShowFloat(tonumber(arg) or 70000)
+        local value = tonumber(arg) or 70000
+        -- In individual mode, pretend it was 2 Iron Ore and 3 Heavy Stone.
+        local half = math.floor(value / 2)
+        ShowFloat(value, { [2772] = { count = 2, value = half }, [2838] = { count = 3, value = value - half } },
+            { 2772, 2838 })
     elseif cmd == "box" then
         if box:IsShown() then HideBox() else UpdateBox(); ShowBoxFor(BOX_TIMEOUT, true) end
     elseif cmd == "tracker" then

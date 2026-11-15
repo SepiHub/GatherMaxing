@@ -474,6 +474,17 @@ UIDropDownMenu_Initialize(menu, function(self, level)
     UIDropDownMenu_AddButton(info, level)
 
     info = UIDropDownMenu_CreateInfo()
+    info.text = "Combined mode"
+    info.tooltipTitle = "Combined mode"
+    info.tooltipText = "Checked: one floating line with the value of everything you looted.\n"
+        .. "Unchecked: one line per item, with its count, icon and value."
+    info.tooltipOnButton = true
+    info.isNotRadio = true
+    info.checked = ns.IsCombinedFloat()
+    info.func = function() ns.SetCombinedFloat(not ns.IsCombinedFloat()) end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
     info.text = "Start new session"
     info.notCheckable = true
     info.func = function() ns.StartNewSession() end
