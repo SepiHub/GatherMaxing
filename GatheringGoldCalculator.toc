@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: GatheringGoldCalculator
+## Notes: Gold value of your Mining, Herbalism, Skinning and Fishing loot, with sessions and history
+## Version: 1.0.0
+## OptionalDeps: Auctionator
+## SavedVariables: GatheringGoldCalculatorDB
+## SavedVariablesPerCharacter: GatheringGoldCalculatorCharDB
+
+GatheringGoldCalculator.lua
+History.lua
