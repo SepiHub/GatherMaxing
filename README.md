@@ -39,3 +39,7 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 ## Install
 
 Copy the `GatherMaxing` folder into `World of Warcraft\_forever_\Interface\AddOns\` and restart the game. Auctionator is optional but recommended. Without it, or before you've run an Auctionator scan at the auction house, items are valued at vendor price. In that case a red note in the Gathering Profit box and in chat when you log in reminds you to install Auctionator and run a scan.
+
+## License
+
+[MIT](LICENSE)
