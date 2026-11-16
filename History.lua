@@ -579,6 +579,15 @@ UIDropDownMenu_Initialize(menu, function(self, level)
     UIDropDownMenu_AddButton(info, level)
 
     info = UIDropDownMenu_CreateInfo()
+    info.text = "Skill Book"
+    info.tooltipTitle = "Skill Book"
+    info.tooltipText = "Everything your gathering professions unlock, with the skill each one needs."
+    info.tooltipOnButton = true
+    info.notCheckable = true
+    info.func = function() ns.ToggleSkillBook() end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
     info.text = "Start new session"
     info.notCheckable = true
     info.func = function() ns.StartNewSession() end

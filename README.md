@@ -10,6 +10,8 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
   - **Individual** (default): one line per item with its count, icon and value, like `2x[Iron Ore]5s 10c` then `3x[Heavy Stone]3s 91c`, appearing 0.2 seconds apart.
   - **Combined:** one line with the value of everything you looted, like `+ 7s 00c`.
 - **Gathering Profit box:** a small text-only window that shows your last loot, your last mining node (all its taps added up), the session total and gold per hour. It fades out after 1 minute without gathering. Drag it wherever you like.
+- **Node tooltips:** mouse over a mining node, herb or skinnable corpse to see the skill it needs and your own skill, like `Requires Mining 125 (you: 140)`. The line is colored like a recipe: red if you can't gather it yet, then orange, yellow, green and gray as skill-ups get rarer. Once you've gathered that kind of node, the tooltip also shows its average value at today's prices, like `~12s 40c per node (8 gathered)`.
+- **Unlock messages:** when a skill-up lets you gather something new, a chat message tells you, like `GatherMaxing: Mining 155 - you can now mine Gold Vein!`, `you can now harvest Fadeleaf` or `you can now skin corpses up to level 30`. This covers nodes, herbs and corpse levels for skinning, not smelting.
 - **Sessions:** a session starts with your first gather and ends after 10 minutes without gathering anything. All four professions count toward the same session.
 - **History window** (open it with the minimap button):
   - **Lifetime:** your lifetime total and every session, showing date, length, gathers and gold. Click a session to see everything you gathered in it, with each item's count, total value and the price per item at the time, so you can see how prices change over time.
@@ -20,6 +22,7 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 
   The menu stays open when you click a toggle, so you can change several at once.
   - **Edit floating text position:** shows a box that plays sample text. Drag the box to move the floating text (it snaps to the middle of the screen, shown by a line that turns gold), and drag its bottom-right corner to make the text bigger or smaller. Right-click the box to reset it. Click the checkmark in its corner (or untick the option) to finish.
+  - **Skill Book:** opens a window listing everything a gathering profession unlocks, by skill level: training ranks (and the character level they need), every mining node and herb, smelting recipes, and which corpse levels you can skin. Each skill number is colored for your current skill, a gold "You are here" line marks where you are, and the top shows what you unlock next. Pick the profession from the dropdown; hover a row for details.
   - **Start new session:** ends the current session (saving it to history) and starts a fresh one.
 - **Per character:** each character has their own history. Window positions and sorting are shared across your account.
 
@@ -28,6 +31,7 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 | Command | What it does |
 | --- | --- |
 | `/gmax` | Open or close the history window (the older `/ggc` and `/mgc` also work) |
+| `/gmax book` | Open or close the Skill Book |
 | `/gmax edit` | Turn floating text edit mode on or off (move and resize it) |
 | `/gmax box` | Show or hide the Gathering Profit box once (works even with the tracker off) |
 | `/gmax test 70000` | Play a test floating text in the current mode (value in copper, not saved) |

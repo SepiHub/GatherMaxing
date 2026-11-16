@@ -95,6 +95,8 @@ local function PriceOf(itemID)
     end
     return select(11, GetItemInfo(itemID)) or 0
 end
+ns.PriceOf = PriceOf
+ns.IsSecret = IsSecret
 
 -- Is there any auction data to use? Probes common gathering items:
 --   "missing"  Auctionator isn't installed or enabled
@@ -175,6 +177,8 @@ ns.FormatMoney = FormatMoney
 --               { start, finish, total, gathers, nodes, taps, byProf = { [prof] = copper } }
 --     current:  the running session, kept so a /reload doesn't lose it
 --     loot:     [prof][itemID] = { count, value } summed over all time
+--     nodes:    [node or creature name] = { count, prof, items = { [itemID] = count } }
+--               what each kind of node dropped, for the tooltip's average value
 --   ns.prefs (whole account, GatherMaxingDB):
 --     window positions, minimap button angle, Resources sort and profession,
 --     and `legacy`: data saved before tracking was per character, waiting
@@ -185,6 +189,7 @@ ns.FormatMoney = FormatMoney
 local function Normalize(d)
     d.sessions = d.sessions or {}
     d.loot = d.loot or {}
+    d.nodes = d.nodes or {}
     for _, p in ipairs(ns.PROFESSIONS) do d.loot[p.key] = d.loot[p.key] or {} end
     -- Older versions only tracked mining, in d.resources.
     if d.resources then
@@ -784,8 +789,10 @@ local function RecordGather(prof, value, items, targetName)
     end
     if not db.current then NewSession() end
     local current = db.current
+    local newNode = true
     if prof == "mining" then
-        if TrackNode(targetName, value) then current.nodes = current.nodes + 1 end
+        newNode = TrackNode(targetName, value)
+        if newNode then current.nodes = current.nodes + 1 end
         current.taps = current.taps + 1
     end
     current.gathers = current.gathers + 1
@@ -815,6 +822,21 @@ local function RecordGather(prof, value, items, targetName)
         end
         s.count = s.count + info.count
         s.value = s.value + info.value
+    end
+
+    -- What this kind of node (or creature, for skinning) drops, so the
+    -- tooltip can show its average value at today's prices. A mining node
+    -- counts once for all its taps.
+    if targetName and prof ~= "fishing" then
+        local n = db.nodes[targetName]
+        if not n then
+            n = { count = 0, prof = prof, items = {} }
+            db.nodes[targetName] = n
+        end
+        if newNode then n.count = n.count + 1 end
+        for itemID, info in pairs(items) do
+            n.items[itemID] = (n.items[itemID] or 0) + info.count
+        end
     end
 
     StartTimer(SESSION_TIMEOUT)
@@ -962,6 +984,8 @@ events:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -- /gmax            open or close the history window   (/ggc and /mgc also work)
+-- /gmax tipdebug   print why node tooltips do or don't get GatherMaxing lines
+-- /gmax book       open or close the Skill Book
 -- /gmax edit       move or resize the floating text (edit mode on/off)
 -- /gmax box        show or hide the Gathering Profit box
 -- /gmax test [c]   play a test float (not saved), e.g. /gmax test 70000
@@ -991,6 +1015,11 @@ SlashCmdList.GATHERMAXING = function(msg)
         local half = math.floor(value / 2)
         ShowFloat(value, { [2772] = { count = 2, value = half }, [2838] = { count = 3, value = value - half } },
             { 2772, 2838 })
+    elseif cmd == "tipdebug" then
+        ns.tooltipDebug = not ns.tooltipDebug
+        print("|cffe0a030GatherMaxing|r: tooltip debug " .. (ns.tooltipDebug and "on." or "off."))
+    elseif cmd == "book" then
+        ns.ToggleSkillBook()
     elseif cmd == "edit" then
         ns.SetFloatEditMode(not ns.IsFloatEditMode())
     elseif cmd == "box" then
