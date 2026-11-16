@@ -157,14 +157,56 @@ end
 -- Player skill and difficulty colors
 ---------------------------------------------------------------------------
 
--- This character's skill and max skill in a profession, or nil if not learned.
-function ns.PlayerSkill(prof)
+-- Skill line IDs, so the lookup works in any client language.
+local SKILL_LINE = { mining = 186, herbalism = 182, skinning = 393, fishing = 356 }
+
+-- Newer profession API: GetProfessions() gives up to 5 indexes
+-- (two main professions, archaeology, fishing, cooking).
+local function FromProfessions(prof)
+    if not GetProfessions or not GetProfessionInfo then return nil end
+    local want = SKILL_LINE[prof]
+    for _, index in pairs({ GetProfessions() }) do
+        local name, _, rank, max, _, _, skillLine = GetProfessionInfo(index)
+        if skillLine == want or name == ns.PROF_BY_KEY[prof].label then return rank, max end
+    end
+end
+
+-- Classic skill list (Character > Skills).
+local function FromSkillLines(prof)
     if not GetNumSkillLines or not GetSkillLineInfo then return nil end
     local want = ns.PROF_BY_KEY[prof].label
     for i = 1, GetNumSkillLines() do
         local name, isHeader, _, rank, _, _, max = GetSkillLineInfo(i)
         if not isHeader and name == want then return rank, max end
     end
+end
+
+-- This character's skill and max skill in a profession, or nil if not learned.
+function ns.PlayerSkill(prof)
+    local ok, rank, max = pcall(FromProfessions, prof)
+    if ok and rank then return rank, max end
+    ok, rank, max = pcall(FromSkillLines, prof)
+    if ok and rank then return rank, max end
+end
+
+-- Lists what each skill API reports, for /gmax tipdebug.
+function ns.DebugSkills()
+    local say = function(...) print("|cffe0a030GatherMaxing skills|r:", ...) end
+    say("GetProfessions", GetProfessions and "yes" or "missing",
+        "| GetSkillLineInfo", GetSkillLineInfo and "yes" or "missing")
+    if GetProfessions and GetProfessionInfo then
+        for _, index in pairs({ GetProfessions() }) do
+            local name, _, rank, max, _, _, skillLine = GetProfessionInfo(index)
+            say("profession", tostring(name), tostring(rank) .. "/" .. tostring(max), "line", tostring(skillLine))
+        end
+    end
+    if GetNumSkillLines and GetSkillLineInfo then
+        for i = 1, GetNumSkillLines() do
+            local name, isHeader, _, rank, _, _, max = GetSkillLineInfo(i)
+            if not isHeader then say("skill line", tostring(name), tostring(rank) .. "/" .. tostring(max)) end
+        end
+    end
+    for _, p in ipairs(ns.PROFESSIONS) do say(p.label, "->", tostring(ns.PlayerSkill(p.key))) end
 end
 
 -- Recipe-style difficulty color for gathering.

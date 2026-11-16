@@ -1018,6 +1018,7 @@ SlashCmdList.GATHERMAXING = function(msg)
     elseif cmd == "tipdebug" then
         ns.tooltipDebug = not ns.tooltipDebug
         print("|cffe0a030GatherMaxing|r: tooltip debug " .. (ns.tooltipDebug and "on." or "off."))
+        if ns.tooltipDebug and ns.DebugSkills then ns.DebugSkills() end
     elseif cmd == "book" then
         ns.ToggleSkillBook()
     elseif cmd == "edit" then

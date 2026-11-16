@@ -1,5 +1,5 @@
 -- Tooltip lines for gathering nodes and skinnable corpses:
---   Requires Mining 125 (you: 140)        colored like a recipe: red, orange,
+--   Requires Mining 125                   colored like a recipe: red, orange,
 --                                         yellow, green or gray
 --   ~12s 40c per node (8 gathered)        average of what that kind of node
 --                                         dropped for you, at today's prices
@@ -36,9 +36,6 @@ local function AddLines(tt, name, prof, need)
     local label = ns.PROF_BY_KEY[prof].label
     local skill = ns.PlayerSkill(prof)
     local text = string.format("Requires %s %d", label, need)
-    if skill then
-        text = text .. string.format(" (you: %d)", skill)
-    end
     tt:AddLine(text, ns.SkillColor(skill, need))
     tt.gmaxText = text -- lets the node check see if the game wiped our lines
 

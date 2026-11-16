@@ -285,6 +285,7 @@ end
 local skillWatch = CreateFrame("Frame")
 skillWatch:RegisterEvent("PLAYER_LOGIN")
 skillWatch:RegisterEvent("SKILL_LINES_CHANGED")
+skillWatch:RegisterEvent("CHAT_MSG_SKILL") -- "Your skill in X has increased to N."
 skillWatch:SetScript("OnEvent", function(_, event)
     -- On login just remember the current skills; announce from then on.
     CheckUnlocks(event ~= "PLAYER_LOGIN")
