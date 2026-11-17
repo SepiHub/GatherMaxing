@@ -106,7 +106,9 @@ frame:SetMovable(true)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetClampedToScreen(true)
-frame:SetFrameStrata("DIALOG")
+-- One layer below the Skill Book (DIALOG), so none of this window,
+-- not even its close button, can show through it.
+frame:SetFrameStrata("HIGH")
 frame:SetScript("OnDragStart", frame.StartMoving)
 frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 frame:Hide()

@@ -96,10 +96,17 @@ local RANKS = {
     { 200, "Artisan",    "Train at character level 35. Max skill 300." },
 }
 
+-- Fishing's last two ranks come from a book and a quest, not a trainer.
+local FISHING_NOTES = {
+    Expert = "Expert Fishing book from Old Man Heming, Booty Bay. Max skill 225.",
+    Artisan = "Nat Pagle's quest in Dustwallow Marsh. Max skill 300.",
+}
+
 for _, p in ipairs(ns.PROFESSIONS) do
     local list = {}
     for _, r in ipairs(RANKS) do
-        list[#list + 1] = { skill = r[1], name = r[2], icon = p.icon, note = r[3], rank = true }
+        local note = p.key == "fishing" and FISHING_NOTES[r[2]] or r[3]
+        list[#list + 1] = { skill = r[1], name = r[2], icon = p.icon, note = note, rank = true }
     end
     for _, n in ipairs(NODE_LIST[p.key] or {}) do
         if n.book ~= false then

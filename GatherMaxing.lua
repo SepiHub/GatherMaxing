@@ -80,6 +80,9 @@ end
 function ns.KnowsProfession(key)
     local p = ns.PROF_BY_KEY[key]
     if not p then return false end
+    -- The skill is the surest sign; the rank spells below are a backup
+    -- (Skinning's rank spell isn't always "known" like the others).
+    if ns.PlayerSkill and ns.PlayerSkill(key) then return true end
     for _, id in ipairs(p.ranks) do
         if (IsPlayerSpell and IsPlayerSpell(id)) or (IsSpellKnown and IsSpellKnown(id)) then
             return true

@@ -3,6 +3,8 @@
 --   colors: the skill number uses recipe colors for your current skill
 --   a gold "You are here" line sits at your current skill
 -- Open it from the minimap right-click menu or /gmax book.
+-- The Trainers button switches to where to train (your faction, closest
+-- first); click a trainer to pin them on the world map.
 
 local ADDON, ns = ...
 
@@ -44,6 +46,9 @@ frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetClampedToScreen(true)
 frame:SetFrameStrata("DIALOG")
+-- Same strata as the history window but well above it, so when they
+-- overlap the Skill Book is always drawn on top.
+frame:SetFrameLevel(50)
 frame:SetScript("OnDragStart", frame.StartMoving)
 frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 frame:Hide()
@@ -63,6 +68,19 @@ subheader:SetJustifyH("LEFT")
 
 local Refresh -- defined below
 local jumpToPlayer -- scroll to "You are here" on the next refresh
+local showTrainers = false -- false: unlocks by skill, true: where to train
+
+subheader:SetWidth(262)
+subheader:SetWordWrap(false)
+
+local viewButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+viewButton:SetSize(84, 20)
+viewButton:SetPoint("TOPRIGHT", -14, -56)
+viewButton:SetScript("OnClick", function()
+    showTrainers = not showTrainers
+    jumpToPlayer = true
+    Refresh()
+end)
 
 local dropdown = CreateFrame("Frame", "GatherMaxingBookDropDown", frame, "UIDropDownMenuTemplate")
 dropdown:SetPoint("TOPRIGHT", 4, -28)
@@ -87,9 +105,10 @@ end)
 
 local legend = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 legend:SetPoint("BOTTOM", 0, 14)
-legend:SetText(Hex(1, 0.25, 0.25) .. "can't yet|r   " .. Hex(1, 0.5, 0.25) .. "orange|r   "
+local LEGEND_COLORS = (Hex(1, 0.25, 0.25) .. "can't yet|r   " .. Hex(1, 0.5, 0.25) .. "orange|r   "
     .. Hex(1, 1, 0) .. "yellow|r   " .. Hex(0.25, 0.75, 0.25) .. "green|r   "
     .. Hex(0.5, 0.5, 0.5) .. "no skill-ups|r")
+local LEGEND_TRAINERS = "|cff999999Click a trainer to pin them on your world map.|r"
 
 local scroll = CreateFrame("ScrollFrame", "GatherMaxingSkillBookScroll", frame, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("TOPLEFT", 12, -78)
@@ -103,9 +122,19 @@ local rows = {}
 
 local function RowEnter(self)
     local e = self.entry
-    if not e or e.here then return end
+    if not e or e.here or e.group then return end
     self.hover:Show()
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if e.trainer then
+        local t = e.trainer
+        GameTooltip:SetText(t.name)
+        GameTooltip:AddLine(string.format("%s, %s (%.1f, %.1f)", t.spot, t.zone, t.x, t.y), 1, 1, 1)
+        if e.note then GameTooltip:AddLine(e.note, 1, 0.82, 0, true) end
+        GameTooltip:AddLine(ns.IsPinned(t) and "Click to remove the map pin."
+            or "Click to open the map with a pin on them.", 0.6, 0.6, 0.6)
+        GameTooltip:Show()
+        return
+    end
     if e.item then
         GameTooltip:SetItemByID(e.item)
     else
@@ -160,6 +189,18 @@ local function GetRow(i)
 
     row:SetScript("OnEnter", RowEnter)
     row:SetScript("OnLeave", RowLeave)
+    row:SetScript("OnMouseUp", function(self, mouse)
+        local e = self.entry
+        if mouse ~= "LeftButton" or not e or not e.trainer then return end
+        GameTooltip:Hide()
+        if ns.IsPinned(e.trainer) then
+            ns.ClearTrainerPin()
+            Refresh()
+        else
+            frame:Hide() -- out of the way of the map
+            ns.PinTrainer(e.trainer, self.profIcon)
+        end
+    end)
     rows[i] = row
     return row
 end
@@ -187,11 +228,66 @@ local function SetEntryRow(row, i, e, skill)
     row.right:SetText(price > 0 and Money(price) or "")
 end
 
+-- A group title in the Trainers view, like "Expert (up to 225)".
+local function SetGroupRow(row, g)
+    row.bg:SetColorTexture(1, 0.82, 0, 0.15)
+    row.skill:SetText("")
+    row.icon:Hide()
+    row.name:SetText("|cffffd100" .. g.title .. "|r")
+    row.right:SetText("")
+end
+
+local GREEN = "|cff40ff40"
+local function SetTrainerRow(row, i, e, profIcon)
+    local t = e.trainer
+    row.bg:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.04 or 0)
+    row.skill:SetText(ns.IsPinned(t) and "|TInterface\\Buttons\\UI-CheckBox-Check:16:16|t" or "")
+    row.icon:SetTexture(profIcon)
+    row.icon:Show()
+    local where
+    if t.sameZone then
+        where = GREEN .. "this zone|r"
+    elseif t.city then
+        where = "|cffffd100" .. t.zone .. "|r" -- capital cities in gold
+    else
+        where = "|cff999999" .. t.zone .. "|r"
+    end
+    -- Rough distance in meters (the game measures in yards), only for
+    -- trainers on your continent.
+    if t.yards then
+        local m = t.yards * 0.9144
+        local dist = m >= 1000 and string.format("~%.1f km", m / 1000)
+            or string.format("~%d m", math.floor(m / 10 + 0.5) * 10)
+        where = where .. "  |cff999999" .. dist .. "|r"
+    end
+    row.name:SetText(string.format("%s%s|r  %s", ns.IsPinned(t) and "|cffffd100" or "|cffffffff", t.name, where))
+    row.right:SetText("")
+end
+
+local function ShowTrainers(prof)
+    local list = {}
+    for _, g in ipairs(ns.TrainerGroups(prof.key)) do
+        list[#list + 1] = { group = true, title = g.title }
+        for _, t in ipairs(g.trainers) do
+            list[#list + 1] = { trainer = t, note = g.note }
+        end
+    end
+    for i, e in ipairs(list) do
+        local row = GetRow(i)
+        row.entry, row.profIcon = e, prof.icon
+        if e.group then SetGroupRow(row, e) else SetTrainerRow(row, i, e, prof.icon) end
+        row:Show()
+    end
+    return #list
+end
+
 Refresh = function()
     if not frame:IsShown() or not ns.prefs then return end
     local prof = SelectedProfession()
     local skill, max = ns.PlayerSkill(prof.key)
     UIDropDownMenu_SetText(dropdown, prof.label)
+    viewButton:SetText(showTrainers and "Unlocks" or "Trainers")
+    legend:SetText(showTrainers and LEGEND_TRAINERS or LEGEND_COLORS)
 
     if skill then
         header:SetText(string.format("%s %s %d / %d", Icon(prof.icon), prof.label, skill, max or skill))
@@ -204,6 +300,14 @@ Refresh = function()
     else
         header:SetText(Icon(prof.icon) .. " " .. prof.label)
         subheader:SetText("|cffff4040You haven't learned " .. prof.label .. ".|r Visit a trainer to start.")
+    end
+
+    for _, row in ipairs(rows) do row:Hide() end
+    if showTrainers then
+        local count = ShowTrainers(prof)
+        content:SetHeight(math.max(count * ROW_HEIGHT, 1))
+        if jumpToPlayer then jumpToPlayer = nil; scroll:SetVerticalScroll(0) end
+        return
     end
 
     -- Entries, with the "You are here" line after the last one you've reached.
@@ -220,7 +324,6 @@ Refresh = function()
         hereIndex = #list
     end
 
-    for _, row in ipairs(rows) do row:Hide() end
     for i, e in ipairs(list) do
         local row = GetRow(i)
         row.entry, row.playerSkill, row.profLabel = e, skill, prof.label
