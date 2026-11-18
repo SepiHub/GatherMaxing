@@ -467,6 +467,7 @@ local function ShowResources()
 
     for i, r in ipairs(list) do
         SetRow(i, r.texture, ItemLabel(r), tostring(r.count), Money(r.value))
+        SetRowClick(i, function() ns.ShowPriceHistory(r.id) end)
     end
     empty:SetText(#list == 0 and ("Nothing from " .. prof.label .. " yet.") or "")
     return #list
@@ -497,6 +498,7 @@ local function ShowSession()
         local each = r.count > 0 and r.value / r.count or 0
         local label = ItemLabel(r) .. "  |cff999999@ " .. Money(each) .. "|r"
         SetRow(i, r.texture, label, tostring(r.count), Money(r.value))
+        SetRowClick(i, function() ns.ShowPriceHistory(r.id) end)
     end
     empty:SetText(#list == 0 and "Nothing gathered in this session." or "")
     return #list

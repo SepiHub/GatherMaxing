@@ -144,6 +144,7 @@ local function RowEnter(self)
     end
     GameTooltip:AddLine("Requires " .. self.profLabel .. " " .. e.skill, ns.SkillColor(self.playerSkill, e.skill))
     if e.note then GameTooltip:AddLine(e.note, 1, 1, 1, true) end
+    if e.item then GameTooltip:AddLine("Click to see its price history.", 0.6, 0.6, 0.6) end
     GameTooltip:Show()
 end
 
@@ -193,7 +194,12 @@ local function GetRow(i)
     row:SetScript("OnLeave", RowLeave)
     row:SetScript("OnMouseUp", function(self, mouse)
         local e = self.entry
-        if mouse ~= "LeftButton" or not e or not e.trainer then return end
+        if mouse ~= "LeftButton" or not e then return end
+        if e.item and not e.trainer then
+            ns.ShowPriceHistory(e.item)
+            return
+        end
+        if not e.trainer then return end
         GameTooltip:Hide()
         if ns.IsPinned(e.trainer) then
             ns.ClearTrainerPin()

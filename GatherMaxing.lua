@@ -175,6 +175,7 @@ local function PriceOf(itemID)
     return AuctionPrice(itemID) or select(11, GetItemInfo(itemID)) or 0
 end
 ns.PriceOf = PriceOf
+ns.AuctionPrice = AuctionPrice -- nil when there is no auction price (price history)
 ns.IsSecret = IsSecret
 
 -- Is there any auction data to use? Probes common gathering items:

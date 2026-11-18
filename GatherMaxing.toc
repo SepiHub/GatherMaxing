@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: GatherMaxing
 ## Notes: Gold value of your Mining, Herbalism, Skinning and Fishing loot, with sessions and history
-## Version: 1.4.0
+## Version: 1.5.0
 ## OptionalDeps: Auctionator, TradeSkillMaster
 ## SavedVariables: GatherMaxingDB
 ## SavedVariablesPerCharacter: GatherMaxingCharDB
@@ -12,3 +12,4 @@ History.lua
 Tooltip.lua
 Trainers.lua
 SkillBook.lua
+PriceHistory.lua
