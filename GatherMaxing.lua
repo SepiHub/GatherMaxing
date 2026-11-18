@@ -4,7 +4,8 @@
 --   * sessions and per-profession resource totals for the history window
 -- Works for Mining, Herbalism, Skinning and Fishing. One session covers all
 -- of them and ends after 10 minutes without gathering anything.
--- Prices come from Auctionator (vendor sell price when there is no AH price).
+-- Prices come from Auctionator, then TradeSkillMaster (vendor sell price
+-- when neither has an AH price).
 --
 -- Mining: a "tap" is one cast, a "node" is all the taps (1 to 4) on one vein.
 
@@ -91,27 +92,44 @@ function ns.KnowsProfession(key)
     return false
 end
 
-local function PriceOf(itemID)
-    if Auctionator and Auctionator.API and Auctionator.API.v1 then
-        local ok, price = pcall(Auctionator.API.v1.GetAuctionPriceByItemID, ADDON, itemID)
-        if ok and price and price > 0 then return price end
+-- Auction price from Auctionator, or TradeSkillMaster when Auctionator has
+-- none. Returns nil when neither addon has a price.
+local TSM_SOURCES = { "DBMarket", "DBRecent", "DBMinBuyout" }
+local function AuctionPrice(itemID)
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if api and api.GetAuctionPriceByItemID then
+        local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON, itemID)
+        if ok and price and price > 0 then return price, "Auctionator" end
     end
-    return select(11, GetItemInfo(itemID)) or 0
+    if TSM_API and TSM_API.GetCustomPriceValue then
+        local itemString = "i:" .. itemID
+        for _, source in ipairs(TSM_SOURCES) do
+            local ok, price = pcall(TSM_API.GetCustomPriceValue, source, itemString)
+            if ok and price and price > 0 then return price, "TSM" end
+        end
+    end
+end
+
+local function PriceOf(itemID)
+    return AuctionPrice(itemID) or select(11, GetItemInfo(itemID)) or 0
 end
 ns.PriceOf = PriceOf
 ns.IsSecret = IsSecret
 
 -- Is there any auction data to use? Probes common gathering items:
---   "missing"  Auctionator isn't installed or enabled
---   "noscan"   Auctionator is there but has no prices yet (no scan done)
+--   "missing"  neither Auctionator nor TSM is installed or enabled
+--   "noscan"   one of them is there but has no prices yet (no scan done)
 --   "ok"       auction prices are available
 local PRICE_PROBES = { 2770, 2771, 2772, 2835, 2836, 2447, 765, 785, 2318, 2319, 6303, 2589 }
-local function PriceStatus()
+local function HasPriceAddon()
     local api = Auctionator and Auctionator.API and Auctionator.API.v1
-    if not api or not api.GetAuctionPriceByItemID then return "missing" end
+    return (api and api.GetAuctionPriceByItemID)
+        or (TSM_API and TSM_API.GetCustomPriceValue)
+end
+local function PriceStatus()
+    if not HasPriceAddon() then return "missing" end
     for _, itemID in ipairs(PRICE_PROBES) do
-        local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON, itemID)
-        if ok and price and price > 0 then return "ok" end
+        if AuctionPrice(itemID) then return "ok" end
     end
     return "noscan"
 end
@@ -119,8 +137,8 @@ ns.PriceStatus = PriceStatus
 
 local RED = "|cffff4040"
 local PRICE_WARNINGS = {
-    missing = "No auction prices: using vendor prices.\nInstall Auctionator and run an Auctionator scan.",
-    noscan  = "No auction prices: using vendor prices.\nRun an Auctionator scan at the auction house.",
+    missing = "No auction prices: using vendor prices.\nInstall Auctionator or TSM and scan the auction house.",
+    noscan  = "No auction prices: using vendor prices.\nRun an Auctionator or TSM scan at the auction house.",
 }
 
 -- Known ores, stones and gems from mining nodes.
@@ -932,7 +950,7 @@ events:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "PLAYER_LOGIN" then
-        -- Give Auctionator a few seconds to load its prices, then warn
+        -- Give Auctionator / TSM a few seconds to load its prices, then warn
         -- in chat if there are none.
         C_Timer.After(5, function()
             local warning = PRICE_WARNINGS[PriceStatus()]

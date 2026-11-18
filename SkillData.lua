@@ -213,7 +213,8 @@ function ns.DebugSkills()
             if not isHeader then say("skill line", tostring(name), tostring(rank) .. "/" .. tostring(max)) end
         end
     end
-    for _, p in ipairs(ns.PROFESSIONS) do say(p.label, "->", tostring(ns.PlayerSkill(p.key))) end
+    -- extra () around PlayerSkill: tostring(nil) when a profession isn't learned
+    for _, p in ipairs(ns.PROFESSIONS) do say(p.label, "->", tostring((ns.PlayerSkill(p.key)))) end
 end
 
 -- Recipe-style difficulty color for gathering.

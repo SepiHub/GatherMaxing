@@ -2,7 +2,8 @@
 --   rows:   skill needed | icon | name                 | price each
 --   colors: the skill number uses recipe colors for your current skill
 --   a gold "You are here" line sits at your current skill
--- Open it from the minimap right-click menu or /gmax book.
+-- It shares one window with Lifetime and Resources: the three buttons at
+-- the bottom switch between them. /gmax book opens it directly.
 -- The Trainers button switches to where to train (your faction, closest
 -- first); click a trainer to pin them on the world map.
 
@@ -40,7 +41,8 @@ end
 ---------------------------------------------------------------------------
 local frame = CreateFrame("Frame", "GatherMaxingSkillBook", UIParent, "BasicFrameTemplateWithInset")
 frame:SetSize(380, 460)
-frame:SetPoint("CENTER", 40, 0)
+frame:SetPoint("CENTER")
+ns.skillBookFrame = frame -- History.lua switches between the windows
 frame:SetMovable(true)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
@@ -104,7 +106,7 @@ UIDropDownMenu_Initialize(dropdown, function(self, level)
 end)
 
 local legend = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-legend:SetPoint("BOTTOM", 0, 14)
+legend:SetPoint("BOTTOM", 0, 40) -- above the mode buttons
 local LEGEND_COLORS = (Hex(1, 0.25, 0.25) .. "can't yet|r   " .. Hex(1, 0.5, 0.25) .. "orange|r   "
     .. Hex(1, 1, 0) .. "yellow|r   " .. Hex(0.25, 0.75, 0.25) .. "green|r   "
     .. Hex(0.5, 0.5, 0.5) .. "no skill-ups|r")
@@ -112,7 +114,7 @@ local LEGEND_TRAINERS = "|cff999999Click a trainer to pin them on your world map
 
 local scroll = CreateFrame("ScrollFrame", "GatherMaxingSkillBookScroll", frame, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("TOPLEFT", 12, -78)
-scroll:SetPoint("BOTTOMRIGHT", -32, 34)
+scroll:SetPoint("BOTTOMRIGHT", -32, 58)
 
 local content = CreateFrame("Frame", nil, scroll)
 content:SetSize(CONTENT_WIDTH, 1)
@@ -344,14 +346,17 @@ end
 frame:SetScript("OnShow", function()
     jumpToPlayer = true
     Refresh()
+    ns.UpdateModeButtons()
 end)
 -- Skill-ups and item icons arriving from the server redraw the list.
 frame:RegisterEvent("SKILL_LINES_CHANGED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:SetScript("OnEvent", function() Refresh() end)
 
+ns.CreateModeButtons(frame, function() return "book" end)
+
 function ns.ToggleSkillBook()
-    frame:SetShown(not frame:IsShown())
+    if frame:IsShown() then frame:Hide() else ns.ShowMode("book") end
 end
 
 ---------------------------------------------------------------------------

@@ -100,7 +100,7 @@ end
 -- Window
 ---------------------------------------------------------------------------
 local frame = CreateFrame("Frame", "GatherMaxingHistory", UIParent, "BasicFrameTemplateWithInset")
-frame:SetSize(380, 440)
+frame:SetSize(380, 460) -- same size as the Skill Book, they share one spot
 frame:SetPoint("CENTER")
 frame:SetMovable(true)
 frame:EnableMouse(true)
@@ -126,12 +126,82 @@ local subheader = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall
 subheader:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
 subheader:SetJustifyH("LEFT")
 
-local toggle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-toggle:SetSize(110, 22)
-toggle:SetPoint("BOTTOM", 0, 10)
+---------------------------------------------------------------------------
+-- Window modes: Lifetime, Resources and Skill Book act as one window.
+-- Both windows get the same three buttons along the bottom; switching
+-- moves the other window to the same spot. The current mode's button is
+-- grayed out.
+---------------------------------------------------------------------------
+local MODES = {
+    { key = "lifetime", label = "Lifetime" },
+    { key = "resources", label = "Resources" },
+    { key = "book", label = "Skill Book" },
+}
+local modeButtons = {} -- every set of buttons, to update them all
+
+-- Buttons along the bottom of `parent`; `current` returns its mode now.
+function ns.CreateModeButtons(parent, current)
+    local set = { current = current }
+    for i, m in ipairs(MODES) do
+        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        b:SetSize(112, 22)
+        b:SetPoint("BOTTOM", (i - 2) * 116, 10)
+        b:SetText(m.label)
+        b:SetScript("OnClick", function() ns.ShowMode(m.key) end)
+        set[m.key] = b
+    end
+    modeButtons[#modeButtons + 1] = set
+    return set
+end
+
+function ns.UpdateModeButtons()
+    for _, set in ipairs(modeButtons) do
+        local now = set.current()
+        for _, m in ipairs(MODES) do set[m.key]:SetEnabled(m.key ~= now) end
+    end
+end
+
+-- Moves `to` onto `from` when `from` is open, so a switch stays in place.
+local function TakePlace(to, from)
+    if not from:IsShown() then return end
+    local point, rel, relPoint, x, y = from:GetPoint()
+    if not point then return end
+    to:ClearAllPoints()
+    to:SetPoint(point, rel, relPoint, x, y)
+end
 
 local Refresh -- defined below
 local scroll_reset -- set when the list should jump back to the top
+local SelectLastProfession -- defined below
+
+function ns.ShowMode(mode)
+    local book = ns.skillBookFrame
+    ns.prefs.windowMode = mode
+    if mode == "book" then
+        TakePlace(book, frame)
+        frame:Hide()
+        book:Show()
+    else
+        if book then
+            TakePlace(frame, book)
+            book:Hide()
+        end
+        if view ~= mode then
+            view = mode
+            if view == "resources" then SelectLastProfession() end
+            scroll_reset = true
+        end
+        if frame:IsShown() then Refresh() else frame:Show() end
+    end
+    ns.UpdateModeButtons()
+end
+
+ns.CreateModeButtons(frame, function()
+    -- A session's details are reached from Lifetime, so Lifetime stays
+    -- clickable as the way back.
+    return view ~= "session" and view or nil
+end)
+
 
 -- Profession dropdown (Resources view only), top right
 local dropdown = CreateFrame("Frame", "GatherMaxingProfDropDown", frame, "UIDropDownMenuTemplate")
@@ -314,7 +384,6 @@ local function ShowLifetime()
     header:SetText("Lifetime: " .. Money(total))
     subheader:SetText(string.format("%d sessions, %d gathers  |cff999999(click a session for details)|r",
         count, gathers))
-    toggle:SetText("Resources")
     columns:Hide()
     dropdown:Hide()
     scroll:SetPoint("TOPLEFT", 12, -76)
@@ -392,7 +461,6 @@ local function ShowResources()
 
     header:SetText(Icon(prof.icon, 18) .. " " .. Money(total))
     subheader:SetText(string.format("%d different %s resources", #list, prof.label:lower()))
-    toggle:SetText("Lifetime")
     UIDropDownMenu_SetText(dropdown, prof.label)
     dropdown:Show()
     ShowItemColumns()
@@ -416,7 +484,6 @@ local function ShowSession()
     header:SetText(SessionIcons(s) .. " " .. Money(s.total))
     subheader:SetText(string.format("%s, %s, %d gathers%s", date("%b %d %Y  %H:%M", s.start),
         Duration(finish - s.start), s.gathers or 0, live and "  |cff40ff40(now)|r" or ""))
-    toggle:SetText("Back")
     dropdown:Hide()
     ShowItemColumns()
 
@@ -449,26 +516,21 @@ Refresh = function()
         count = ShowLifetime()
     end
     content:SetHeight(math.max(count * ROW_HEIGHT, 1))
+    ns.UpdateModeButtons() -- a session view frees the Lifetime button
 end
 ns.RefreshHistory = Refresh
 
 -- Opening Resources picks the profession this character gathered with last.
 -- The dropdown can still switch it afterwards.
-local function SelectLastProfession()
+SelectLastProfession = function()
     if ns.db and ns.db.lastProf then ns.prefs.resProf = ns.db.lastProf end
 end
 
-toggle:SetScript("OnClick", function()
-    -- Lifetime -> Resources, Resources -> Lifetime, a session -> back to Lifetime
-    view = view == "lifetime" and "resources" or "lifetime"
-    if view == "resources" then SelectLastProfession() end
-    scroll:SetVerticalScroll(0)
-    Refresh()
-end)
 
 frame:SetScript("OnShow", function()
     if view == "resources" then SelectLastProfession() end
     Refresh()
+    ns.UpdateModeButtons()
 end)
 -- Item names and icons can arrive from the server after the window is drawn.
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
@@ -476,8 +538,16 @@ frame:SetScript("OnEvent", function()
     if view ~= "lifetime" then Refresh() end
 end)
 
+-- Left-click on the minimap button: closes the window, whichever mode it's
+-- in, or opens it on the tab it was closed on (the Skill Book at first).
 function ns.ToggleHistory()
-    frame:SetShown(not frame:IsShown())
+    local book = ns.skillBookFrame
+    if frame:IsShown() or (book and book:IsShown()) then
+        frame:Hide()
+        if book then book:Hide() end
+        return
+    end
+    ns.ShowMode(ns.prefs.windowMode or "book")
 end
 
 ---------------------------------------------------------------------------
@@ -578,15 +648,6 @@ UIDropDownMenu_Initialize(menu, function(self, level)
     info.keepShownOnClick = true
     info.checked = ns.IsFloatEditMode()
     info.func = function() ns.SetFloatEditMode(not ns.IsFloatEditMode()) end
-    UIDropDownMenu_AddButton(info, level)
-
-    info = UIDropDownMenu_CreateInfo()
-    info.text = "Skill Book"
-    info.tooltipTitle = "Skill Book"
-    info.tooltipText = "Everything your gathering professions unlock, with the skill each one needs."
-    info.tooltipOnButton = true
-    info.notCheckable = true
-    info.func = function() ns.ToggleSkillBook() end
     UIDropDownMenu_AddButton(info, level)
 
     info = UIDropDownMenu_CreateInfo()
