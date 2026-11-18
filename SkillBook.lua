@@ -355,6 +355,11 @@ frame:SetScript("OnEvent", function() Refresh() end)
 
 ns.CreateModeButtons(frame, function() return "book" end)
 
+-- Redraw after the price source changes.
+function ns.RefreshSkillBook()
+    if frame:IsShown() then Refresh() end
+end
+
 function ns.ToggleSkillBook()
     if frame:IsShown() then frame:Hide() else ns.ShowMode("book") end
 end

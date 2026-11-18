@@ -4,8 +4,9 @@
 --   * sessions and per-profession resource totals for the history window
 -- Works for Mining, Herbalism, Skinning and Fishing. One session covers all
 -- of them and ends after 10 minutes without gathering anything.
--- Prices come from Auctionator, then TradeSkillMaster (vendor sell price
--- when neither has an AH price).
+-- Prices come from the source picked in the right-click menu: Auto
+-- (Auctionator, then TradeSkillMaster), one of them, a custom TSM price,
+-- or vendor price. Vendor sell price fills in when there is no AH price.
 --
 -- Mining: a "tap" is one cast, a "node" is all the taps (1 to 4) on one vein.
 
@@ -92,21 +93,81 @@ function ns.KnowsProfession(key)
     return false
 end
 
--- Auction price from Auctionator, or TradeSkillMaster when Auctionator has
--- none. Returns nil when neither addon has a price.
-local TSM_SOURCES = { "DBMarket", "DBRecent", "DBMinBuyout" }
-local function AuctionPrice(itemID)
+---------------------------------------------------------------------------
+-- Prices. The source is picked in the minimap right-click menu
+-- (ns.prefs.priceSource); "auto" (the default) uses Auctionator, then TSM.
+-- When the picked source has no price, the vendor sell price is used.
+---------------------------------------------------------------------------
+-- key: "auto", "auctionator", "custom", "vendor", or a TSM price source.
+ns.PRICE_SOURCES = {
+    { key = "auto", label = "Auto (Auctionator, then TSM)" },
+    { key = "auctionator", label = "AN: Auctionator", needs = "auctionator" },
+    { key = "DBHistorical", label = "TSM: Historical Price", needs = "tsm" },
+    { key = "DBMarket", label = "TSM: Market Value", needs = "tsm" },
+    { key = "DBMinBuyout", label = "TSM: Min Buyout", needs = "tsm" },
+    { key = "DBRecent", label = "TSM: Recent Value", needs = "tsm" },
+    { key = "DBRegionHistorical", label = "TSM: Region Historical Price", needs = "tsm" },
+    { key = "DBRegionMarketAvg", label = "TSM: Region Market Value Avg", needs = "tsm" },
+    { key = "DBRegionSaleAvg", label = "TSM: Region Sale Avg", needs = "tsm" },
+    { key = "custom", label = "TSM: Custom price source", needs = "tsm" },
+    { key = "vendor", label = "Vendor price" },
+}
+local SOURCE_BY_KEY = {}
+for _, src in ipairs(ns.PRICE_SOURCES) do SOURCE_BY_KEY[src.key] = src end
+
+function ns.HasAuctionator()
     local api = Auctionator and Auctionator.API and Auctionator.API.v1
-    if api and api.GetAuctionPriceByItemID then
-        local ok, price = pcall(api.GetAuctionPriceByItemID, ADDON, itemID)
-        if ok and price and price > 0 then return price, "Auctionator" end
+    return api and api.GetAuctionPriceByItemID and true or false
+end
+
+function ns.HasTSM()
+    return TSM_API and TSM_API.GetCustomPriceValue and true or false
+end
+
+-- Is this TSM price string valid? Returns ok, error text.
+function ns.IsValidTSMPrice(text)
+    if not ns.HasTSM() then return false, "TSM isn't loaded." end
+    if TSM_API.IsCustomPriceValid then
+        local ok, valid, err = pcall(TSM_API.IsCustomPriceValid, text)
+        if not ok then return false, tostring(valid) end
+        return valid and true or false, err
     end
-    if TSM_API and TSM_API.GetCustomPriceValue then
-        local itemString = "i:" .. itemID
-        for _, source in ipairs(TSM_SOURCES) do
-            local ok, price = pcall(TSM_API.GetCustomPriceValue, source, itemString)
-            if ok and price and price > 0 then return price, "TSM" end
-        end
+    return true -- a TSM without the check: trust it
+end
+
+function ns.PriceSource()
+    local key = ns.prefs and ns.prefs.priceSource
+    return SOURCE_BY_KEY[key] and key or "auto"
+end
+
+local function AuctionatorPrice(itemID)
+    if not ns.HasAuctionator() then return nil end
+    local ok, price = pcall(Auctionator.API.v1.GetAuctionPriceByItemID, ADDON, itemID)
+    if ok and type(price) == "number" and price > 0 then return price end
+end
+
+-- Any TSM price string: a source like "DBMarket" or a formula like
+-- "0.5 * DBRegionMarketAvg". TSM works it out.
+local function TSMPrice(priceString, itemID)
+    if not ns.HasTSM() or not priceString or priceString == "" then return nil end
+    local ok, price = pcall(TSM_API.GetCustomPriceValue, priceString, "i:" .. itemID)
+    if ok and type(price) == "number" and price > 0 then return price end
+end
+
+local AUTO_TSM = { "DBMarket", "DBRecent", "DBMinBuyout" }
+
+-- Auction price from the picked source, or nil when it has none.
+local function AuctionPrice(itemID)
+    local source = ns.PriceSource()
+    if source == "vendor" then return nil end
+    if source == "auctionator" then return AuctionatorPrice(itemID) end
+    if source == "custom" then return TSMPrice(ns.prefs.customPrice, itemID) end
+    if source ~= "auto" then return TSMPrice(source, itemID) end
+    local price = AuctionatorPrice(itemID)
+    if price then return price end
+    for _, tsmSource in ipairs(AUTO_TSM) do
+        price = TSMPrice(tsmSource, itemID)
+        if price then return price end
     end
 end
 
@@ -117,17 +178,22 @@ ns.PriceOf = PriceOf
 ns.IsSecret = IsSecret
 
 -- Is there any auction data to use? Probes common gathering items:
---   "missing"  neither Auctionator nor TSM is installed or enabled
---   "noscan"   one of them is there but has no prices yet (no scan done)
---   "ok"       auction prices are available
+--   "ok"         auction prices are available (or vendor price was picked)
+--   "missing"    the addon the picked source needs isn't installed or enabled
+--   "badcustom"  the custom TSM price is empty or not valid
+--   "noscan"     the addon is there but has no prices yet (no scan done)
 local PRICE_PROBES = { 2770, 2771, 2772, 2835, 2836, 2447, 765, 785, 2318, 2319, 6303, 2589 }
-local function HasPriceAddon()
-    local api = Auctionator and Auctionator.API and Auctionator.API.v1
-    return (api and api.GetAuctionPriceByItemID)
-        or (TSM_API and TSM_API.GetCustomPriceValue)
-end
 local function PriceStatus()
-    if not HasPriceAddon() then return "missing" end
+    local source = ns.PriceSource()
+    if source == "vendor" then return "ok" end
+    local needs = SOURCE_BY_KEY[source].needs
+    if needs == "auctionator" and not ns.HasAuctionator() then return "missing" end
+    if needs == "tsm" and not ns.HasTSM() then return "missing" end
+    if source == "auto" and not ns.HasAuctionator() and not ns.HasTSM() then return "missing" end
+    if source == "custom" then
+        local text = ns.prefs.customPrice
+        if not text or text == "" or not ns.IsValidTSMPrice(text) then return "badcustom" end
+    end
     for _, itemID in ipairs(PRICE_PROBES) do
         if AuctionPrice(itemID) then return "ok" end
     end
@@ -136,10 +202,23 @@ end
 ns.PriceStatus = PriceStatus
 
 local RED = "|cffff4040"
-local PRICE_WARNINGS = {
-    missing = "No auction prices: using vendor prices.\nInstall Auctionator or TSM and scan the auction house.",
-    noscan  = "No auction prices: using vendor prices.\nRun an Auctionator or TSM scan at the auction house.",
-}
+-- Red note for the Gathering Profit box and the login message, or nil.
+local function PriceWarning()
+    local status = PriceStatus()
+    if status == "ok" then return nil end
+    local needs = SOURCE_BY_KEY[ns.PriceSource()].needs
+    if status == "missing" then
+        if needs == "auctionator" then
+            return "Auctionator isn't loaded: using vendor prices.\nInstall it or pick another price source."
+        elseif needs == "tsm" then
+            return "TSM isn't loaded: using vendor prices.\nInstall it or pick another price source."
+        end
+        return "No auction prices: using vendor prices.\nInstall Auctionator or TSM and scan the auction house."
+    elseif status == "badcustom" then
+        return "Custom TSM price isn't valid: using vendor prices.\nFix it in the minimap right-click menu."
+    end
+    return "No auction prices: using vendor prices.\nScan the auction house or pick another price source."
+end
 
 -- Known ores, stones and gems from mining nodes.
 local MINING_ITEMS = {
@@ -716,7 +795,7 @@ local function UpdateBox()
     end
     lines[#lines + 1] = string.format("Session (%d gathers): %s", current.gathers, M(current.total))
     lines[#lines + 1] = "Per hour: " .. M(current.total / hours)
-    local warning = PRICE_WARNINGS[PriceStatus()]
+    local warning = PriceWarning()
     if warning then
         for line in warning:gmatch("[^\n]+") do
             lines[#lines + 1] = RED .. line .. "|r"
@@ -730,6 +809,18 @@ box:SetScript("OnUpdate", function(self, elapsed)
     self.t = (self.t or 0) + elapsed
     if self.t > 5 then self.t = 0; UpdateBox() end
 end)
+
+-- Picked in the minimap right-click menu. Saved values (history, totals)
+-- keep the price they had; tooltips, the Skill Book and new gathers use
+-- the new source.
+function ns.SetPriceSource(key, customPrice)
+    ns.prefs.priceSource = key
+    if customPrice then ns.prefs.customPrice = customPrice end
+    UpdateBox()
+    if ns.RefreshSkillBook then ns.RefreshSkillBook() end
+    local warning = PriceWarning()
+    if warning then print(RED .. "GatherMaxing: " .. warning:gsub("\n", " ") .. "|r") end
+end
 
 ---------------------------------------------------------------------------
 -- Sessions: start on the first gather (any profession), end after
@@ -953,7 +1044,7 @@ events:SetScript("OnEvent", function(_, event, ...)
         -- Give Auctionator / TSM a few seconds to load its prices, then warn
         -- in chat if there are none.
         C_Timer.After(5, function()
-            local warning = PRICE_WARNINGS[PriceStatus()]
+            local warning = PriceWarning()
             if warning then
                 print(RED .. "GatherMaxing: " .. warning:gsub("\n", " ") .. "|r")
             end

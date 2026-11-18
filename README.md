@@ -1,6 +1,6 @@
 # GatherMaxing
 
-A World of Warcraft: Forever addon that shows how much gold your gathering is worth, using [Auctionator](https://www.curseforge.com/wow/addons/auctionator) or [TradeSkillMaster](https://www.curseforge.com/wow/addons/tradeskill-master) prices. Auctionator is checked first, then TSM (market value, then recent, then min buyout). If neither has an auction price, it uses the vendor sell price.
+A World of Warcraft: Forever addon that shows how much gold your gathering is worth, using [Auctionator](https://www.curseforge.com/wow/addons/auctionator) or [TradeSkillMaster](https://www.curseforge.com/wow/addons/tradeskill-master) prices. By default Auctionator is checked first, then TSM (market value, then recent, then min buyout); you can pick a different price source from the minimap right-click menu. If there's no auction price, it uses the vendor sell price.
 
 Works with **Mining, Herbalism, Skinning and Fishing**.
 
@@ -23,6 +23,7 @@ Works with **Mining, Herbalism, Skinning and Fishing**.
 
   The menu stays open when you click a toggle, so you can change several at once.
   - **Edit floating text position:** shows a box that plays sample text. Drag the box to move the floating text (it snaps to the middle of the screen, shown by a line that turns gold), and drag its bottom-right corner to make the text bigger or smaller. Right-click the box to reset it. Click the checkmark in its corner (or untick the option) to finish.
+  - **Price source:** where prices come from. **Auto** (the default) uses Auctionator, then TSM. You can also pick Auctionator only, a TSM source (Market Value, Min Buyout, Recent Value, Historical Price, Region Market Value Avg, Region Historical Price, Region Sale Avg), **Custom price source** to type any TSM price string (like `0.5 * DBRegionMarketAvg`), or vendor price only. Sources whose addon isn't loaded are grayed out. Items with no price from the picked source use the vendor price. Saved history keeps the prices it had; tooltips, the Skill Book and new gathers use the new source.
   - **Start new session:** ends the current session (saving it to history) and starts a fresh one.
 - **Per character:** each character has their own history. Window positions and sorting are shared across your account.
 

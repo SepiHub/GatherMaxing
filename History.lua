@@ -608,10 +608,92 @@ end
 
 button:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", DragUpdate) end)
 button:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+-- Custom TSM price: a text box for any TSM price string.
+local function SaveCustomPrice(text)
+    text = (text or ""):match("^%s*(.-)%s*$")
+    if text == "" then
+        print("|cffff4040GatherMaxing: enter a TSM price, like DBMarket or 0.5 * DBRegionMarketAvg.|r")
+        return false
+    end
+    local ok, err = ns.IsValidTSMPrice(text)
+    if not ok then
+        print("|cffff4040GatherMaxing: \"" .. text .. "\" isn't a valid TSM price"
+            .. (err and (": " .. tostring(err)) or ".") .. "|r")
+        return false
+    end
+    ns.SetPriceSource("custom", text)
+    print("|cffe0a030GatherMaxing|r: prices now come from TSM: " .. text)
+    return true
+end
+
+local function PopupEditBox(dialog)
+    return (dialog.GetEditBox and dialog:GetEditBox()) or dialog.editBox or dialog.EditBox
+end
+
+StaticPopupDialogs["GATHERMAXING_CUSTOM_PRICE"] = {
+    text = "GatherMaxing: custom TSM price source\n|cff999999Any TSM price string, like DBMarket or 0.5 * DBRegionMarketAvg|r",
+    button1 = ACCEPT or "Accept",
+    button2 = CANCEL or "Cancel",
+    hasEditBox = true,
+    editBoxWidth = 260,
+    maxLetters = 250,
+    OnShow = function(self)
+        local box = PopupEditBox(self)
+        box:SetText(ns.prefs.customPrice or "")
+        box:HighlightText()
+        box:SetFocus()
+    end,
+    -- Returning true keeps the box open so a typo can be fixed.
+    OnAccept = function(self) return not SaveCustomPrice(PopupEditBox(self):GetText()) end,
+    EditBoxOnEnterPressed = function(self)
+        if SaveCustomPrice(self:GetText()) then self:GetParent():Hide() end
+    end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+-- Price source submenu: every source, the current one checked. Sources
+-- whose addon isn't loaded are grayed out.
+local function AddPriceSources(level)
+    local current = ns.PriceSource()
+    for _, src in ipairs(ns.PRICE_SOURCES) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = src.label
+        if src.key == "custom" and ns.prefs.customPrice and ns.prefs.customPrice ~= "" then
+            info.text = src.label .. ": |cff999999" .. ns.prefs.customPrice .. "|r"
+        end
+        info.checked = (src.key == current)
+        info.disabled = (src.needs == "auctionator" and not ns.HasAuctionator())
+            or (src.needs == "tsm" and not ns.HasTSM()) or nil
+        if src.key == "custom" then
+            info.tooltipTitle = src.label
+            info.tooltipText = "Type any TSM price string, like 0.5 * DBRegionMarketAvg."
+            info.tooltipOnButton = true
+            info.func = function()
+                CloseDropDownMenus()
+                StaticPopup_Show("GATHERMAXING_CUSTOM_PRICE")
+            end
+        else
+            info.func = function()
+                ns.SetPriceSource(src.key)
+                CloseDropDownMenus()
+            end
+        end
+        UIDropDownMenu_AddButton(info, level)
+    end
+end
+
 -- Right-click menu
 local menu = CreateFrame("Frame", "GatherMaxingMinimapMenu", UIParent, "UIDropDownMenuTemplate")
-UIDropDownMenu_Initialize(menu, function(self, level)
+UIDropDownMenu_Initialize(menu, function(self, level, menuList)
     if not ns.prefs then return end -- runs once while the file loads
+    if level == 2 and menuList == "price" then
+        AddPriceSources(level)
+        return
+    end
     local info = UIDropDownMenu_CreateInfo()
     info.text = "GatherMaxing"
     info.isTitle = true
@@ -648,6 +730,17 @@ UIDropDownMenu_Initialize(menu, function(self, level)
     info.keepShownOnClick = true
     info.checked = ns.IsFloatEditMode()
     info.func = function() ns.SetFloatEditMode(not ns.IsFloatEditMode()) end
+    UIDropDownMenu_AddButton(info, level)
+
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Price source"
+    info.tooltipTitle = "Price source"
+    info.tooltipText = "Where item prices come from. Items without a price there use the vendor price."
+    info.tooltipOnButton = true
+    info.notCheckable = true
+    info.hasArrow = true
+    info.menuList = "price"
+    info.keepShownOnClick = true
     UIDropDownMenu_AddButton(info, level)
 
     info = UIDropDownMenu_CreateInfo()
